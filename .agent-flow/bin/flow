@@ -20,38 +20,73 @@ file_budget="${AGENT_FLOW_PRODUCTION_FILE_BUDGET:-5}"
 default_diff="${AGENT_FLOW_DEFAULT_DIFF:-HEAD}"
 
 die() {
-  printf 'error: %s\n' "$*" >&2
+  printf 'ошибка: %s\n' "$*" >&2
   exit 1
 }
 
 validate_integer() {
-  [[ "$2" =~ ^[0-9]+$ ]] || die "$1 must be a non-negative integer, got: $2"
+  [[ "$2" =~ ^[0-9]+$ ]] || die "$1 должен быть целым неотрицательным числом, получено: $2"
 }
 
 usage() {
   printf '%s\n' \
-    'Usage: .agent-flow/bin/flow <command> [arguments]' \
+    'Использование: .agent-flow/bin/flow <команда> [аргументы]' \
     '' \
-    'Commands:' \
-    '  new <slug>          Create a timestamped task directory from templates' \
-    '  status              Show task states' \
-    '  budget [git-range]  Classify and count changed lines (default: HEAD)' \
-    '  validate            Validate flow files and task structure' \
-    '  help                Show this help'
+    'Команды:' \
+    '  setup-local        Локально исключить flow-файлы через .git/info/exclude' \
+    '  new <slug>         Создать task-папку из шаблонов' \
+    '  status             Показать состояния задач' \
+    '  budget [git-range] Классифицировать и посчитать изменённые строки (по умолчанию HEAD)' \
+    '  validate           Проверить файлы flow и структуру задач' \
+    '  help               Показать эту справку'
+}
+
+setup_local() {
+  git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || die 'setup-local требует Git-репозиторий'
+
+  local exclude_path pattern tracked
+  exclude_path="$(git -C "$repo_root" rev-parse --git-path info/exclude)"
+  if [[ "$exclude_path" != /* ]]; then
+    exclude_path="$repo_root/$exclude_path"
+  fi
+
+  mkdir -p "$(dirname "$exclude_path")"
+  touch "$exclude_path"
+
+  if ! grep -Fqx '# Agent Context Flow: local-only files' "$exclude_path"; then
+    printf '\n# Agent Context Flow: local-only files\n' >> "$exclude_path"
+  fi
+  for pattern in '/AGENTS.md' '/.agent-flow/'; do
+    if ! grep -Fqx "$pattern" "$exclude_path"; then
+      printf '%s\n' "$pattern" >> "$exclude_path"
+    fi
+  done
+
+  printf 'Flow-файлы локально исключены через %s\n' "$exclude_path"
+
+  tracked="$(git -C "$repo_root" ls-files -- AGENTS.md .agent-flow)"
+  if [[ -n "$tracked" ]]; then
+    printf '%s\n' \
+      'ПРЕДУПРЕЖДЕНИЕ: некоторые flow-файлы уже находятся в Git index:' \
+      "$tracked" \
+      'Index не был изменён автоматически.' \
+      'После проверки их можно удалить только из index командой:' \
+      '  git rm -r --cached -- AGENTS.md .agent-flow' >&2
+  fi
 }
 
 new_task() {
-  [[ $# -eq 1 ]] || die 'new expects one short slug, for example: add-payment-retry'
+  [[ $# -eq 1 ]] || die 'new ожидает один короткий slug, например: add-payment-retry'
   local raw_slug="$1"
   local slug
   slug="$(printf '%s' "$raw_slug" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | sed 's/--*/-/g; s/^-//; s/-$//')"
-  [[ -n "$slug" ]] || die 'slug must contain latin letters or digits'
+  [[ -n "$slug" ]] || die 'slug должен содержать латинские буквы или цифры'
 
   local created_at task_id destination template target temporary
   created_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   task_id="$(date -u '+%Y%m%d-%H%M%S')-$slug"
   destination="$flow_dir/tasks/$task_id"
-  [[ ! -e "$destination" ]] || die "task already exists: $destination"
+  [[ ! -e "$destination" ]] || die "задача уже существует: $destination"
 
   mkdir -p "$destination/decisions"
   for template in "$flow_dir/templates/task/"*.md; do
@@ -63,8 +98,8 @@ new_task() {
     mv "$temporary" "$target"
   done
 
-  printf 'Created %s\n' "$destination"
-  printf 'Next: fill %s/brief.md and follow WORKFLOW.md\n' "$destination"
+  printf 'Создано: %s\n' "$destination"
+  printf 'Далее: заполнить %s/brief.md и следовать WORKFLOW.md\n' "$destination"
 }
 
 show_status() {
@@ -73,11 +108,14 @@ show_status() {
     [[ -e "$brief" ]] || continue
     found=1
     task="$(basename "$(dirname "$brief")")"
-    state="$(sed -n 's/^- State: `\([^`]*\)`.*/\1/p' "$brief" | head -n 1)"
+    state="$(sed -n \
+      -e 's/^- Состояние: `\([^`]*\)`.*/\1/p' \
+      -e 's/^- State: `\([^`]*\)`.*/\1/p' \
+      "$brief" | head -n 1)"
     [[ -n "$state" ]] || state='UNKNOWN'
     printf '%-48s %s\n' "$task" "$state"
   done
-  [[ $found -eq 1 ]] || printf 'No task records found.\n'
+  [[ $found -eq 1 ]] || printf 'Записи задач не найдены.\n'
 }
 
 show_budget() {
@@ -86,7 +124,7 @@ show_budget() {
   validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
   validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
 
-  git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || die 'budget requires a git repository'
+  git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || die 'budget требует Git-репозиторий'
 
   local output tracked_output untracked_output status path absolute additions
   set +e
@@ -140,21 +178,21 @@ show_budget() {
       }
     }
     END {
-      printf "Production: %d lines in %d files\n", production, production_files
-      printf "Tests:      %d lines in %d files\n", tests, test_files
-      printf "Generated:  %d lines in %d files\n", generated, generated_files
-      printf "Flow docs:  %d lines in %d files\n", workflow, workflow_files
-      printf "Slice budget: %d lines / %d production files\n", slice_budget, file_budget
-      printf "PR budget:    %d production lines\n", pr_budget
+      printf "Production-код: %d строк в %d файлах\n", production, production_files
+      printf "Тесты:          %d строк в %d файлах\n", tests, test_files
+      printf "Сгенерированное: %d строк в %d файлах\n", generated, generated_files
+      printf "Документы flow:  %d строк в %d файлах\n", workflow, workflow_files
+      printf "Бюджет этапа: %d строк / %d production-файлов\n", slice_budget, file_budget
+      printf "Бюджет PR:    %d строк production-кода\n", pr_budget
       if (production > pr_budget) {
-        print "RESULT: exceeds PR budget; split or record an approved exception"
+        print "РЕЗУЛЬТАТ: превышен бюджет PR; разделите изменение или зафиксируйте согласованное исключение"
         exit 3
       }
       if (production > slice_budget || production_files > file_budget) {
-        print "RESULT: exceeds slice budget; stop at a human gate"
+        print "РЕЗУЛЬТАТ: превышен бюджет этапа; остановитесь для решения человека"
         exit 2
       }
-      print "RESULT: within default slice budget"
+      print "РЕЗУЛЬТАТ: изменение укладывается в стандартный бюджет этапа"
     }
   '
 }
@@ -166,14 +204,14 @@ validate_flow() {
     "$flow_dir/PROJECT.md"
     "$flow_dir/POLICY.md"
     "$flow_dir/WORKFLOW.md"
-    "$flow_dir/CODE_REVIEW.md"
-    "$flow_dir/OWNERSHIP.md"
+    "$flow_dir/HUMAN_REVIEW.md"
+    "$flow_dir/CONTEXT_HANDOFF.md"
     "$flow_dir/config.env"
   )
   local item missing=0 task_file task_dir
   for item in "${required[@]}"; do
     if [[ ! -s "$item" ]]; then
-      printf 'MISSING %s\n' "$item" >&2
+      printf 'ОТСУТСТВУЕТ %s\n' "$item" >&2
       missing=1
     fi
   done
@@ -181,28 +219,38 @@ validate_flow() {
   for task_dir in "$flow_dir/tasks/"*/; do
     [[ -d "$task_dir" ]] || continue
     [[ "$(basename "$task_dir")" == 'tasks' ]] && continue
-    for task_file in brief.md discovery.md plan.md progress.md review.md handoff.md; do
+    for task_file in brief.md discovery.md plan.md progress.md handoff.md; do
       if [[ ! -s "$task_dir/$task_file" ]]; then
-        printf 'MISSING %s\n' "$task_dir/$task_file" >&2
+        printf 'ОТСУТСТВУЕТ %s\n' "$task_dir/$task_file" >&2
         missing=1
       fi
     done
+    if [[ ! -s "$task_dir/final-review.md" ]]; then
+      if [[ -s "$task_dir/review.md" ]]; then
+        printf 'УСТАРЕВШИЙ ФОРМАТ %s (создайте final-review.md перед финальной приёмкой)\n' \
+          "${task_dir%/}/review.md" >&2
+      else
+        printf 'ОТСУТСТВУЕТ %s\n' "${task_dir%/}/final-review.md" >&2
+        missing=1
+      fi
+    fi
   done
 
   validate_integer AGENT_FLOW_SLICE_BUDGET "$slice_budget"
   validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
   validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
   [[ $missing -eq 0 ]] || exit 1
-  printf 'Flow structure is valid.\n'
+  printf 'Структура flow корректна.\n'
 }
 
 command="${1:-help}"
 shift || true
 case "$command" in
+  setup-local) [[ $# -eq 0 ]] || die 'setup-local не принимает аргументы'; setup_local ;;
   new) new_task "$@" ;;
-  status) [[ $# -eq 0 ]] || die 'status takes no arguments'; show_status ;;
-  budget) [[ $# -le 1 ]] || die 'budget accepts at most one git range'; show_budget "${1:-}" ;;
-  validate) [[ $# -eq 0 ]] || die 'validate takes no arguments'; validate_flow ;;
+  status) [[ $# -eq 0 ]] || die 'status не принимает аргументы'; show_status ;;
+  budget) [[ $# -le 1 ]] || die 'budget принимает не более одного Git-диапазона'; show_budget "${1:-}" ;;
+  validate) [[ $# -eq 0 ]] || die 'validate не принимает аргументы'; validate_flow ;;
   help|-h|--help) usage ;;
-  *) die "unknown command: $command" ;;
+  *) die "неизвестная команда: $command" ;;
 esac

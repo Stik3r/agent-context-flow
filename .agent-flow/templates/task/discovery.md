@@ -1,50 +1,49 @@
-# Discovery: __TASK_ID__
+# Исследование: __TASK_ID__
 
-## Current flow
+## Текущий поток выполнения
 
-Опиши `entry point → decisions → state changes → side effects → response` со
-ссылками на paths/symbols.
+Опиши `точка входа → решения → изменения состояния → побочные эффекты → результат`
+со ссылками на пути и символы.
 
-## Relevant existing patterns
+## Подходящие существующие решения
 
-| Pattern | Location | Why relevant |
+| Подход | Расположение | Почему подходит |
 | --- | --- | --- |
 
-## Invariants and contracts
+## Инварианты и контракты
 
-| Invariant/contract | Evidence | Risk if violated |
+| Инвариант/контракт | Доказательство | Риск нарушения |
 | --- | --- | --- |
 
-## Failure modes and observability
+## Ошибки и наблюдаемость
 
-| Failure | Current behavior | How detected |
+| Ошибка | Текущее поведение | Как обнаруживается |
 | --- | --- | --- |
 
-## Test harness
+## Средства проверки
 
-- Existing tests: `UNKNOWN`
-- Commands: `UNKNOWN`
-- Gaps: `UNKNOWN`
+- Существующие тесты: `НЕИЗВЕСТНО`
+- Команды: `НЕИЗВЕСТНО`
+- Пробелы: `НЕИЗВЕСТНО`
 
-## Options
+## Варианты
 
-### Option A
+### Вариант А
 
-- Approach:
-- Advantages:
-- Costs/risks:
+- Подход:
+- Преимущества:
+- Цена и риски:
 
-### Option B
+### Вариант Б
 
-- Approach:
-- Advantages:
-- Costs/risks:
+- Подход:
+- Преимущества:
+- Цена и риски:
 
-## Recommendation
+## Рекомендация
 
-`UNKNOWN`
+`НЕИЗВЕСТНО`
 
-## Open questions
+## Открытые вопросы
 
-- `UNKNOWN`
-
+- `НЕИЗВЕСТНО`

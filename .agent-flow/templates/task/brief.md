@@ -1,40 +1,41 @@
-# Task Brief: __TASK_ID__
+# Карточка задачи: __TASK_ID__
 
-- State: `INTAKE`
-- Created: `__CREATED_AT__`
-- Risk mode: `UNCLASSIFIED`
-- Owner: `UNASSIGNED`
+- Состояние: `INTAKE`
+- Создана: `__CREATED_AT__`
+- Режим риска: `UNCLASSIFIED`
+- Владелец: `UNASSIGNED`
+- Базовый коммит: `НЕИЗВЕСТНО`
+- Исходные изменённые пути: `НЕИЗВЕСТНО`
 
-## Problem
+## Проблема
 
-`UNKNOWN`
+`НЕИЗВЕСТНО`
 
-## Current behavior
+## Текущее поведение
 
-`UNKNOWN`
+`НЕИЗВЕСТНО`
 
-## Desired behavior
+## Требуемое поведение
 
-`UNKNOWN`
+`НЕИЗВЕСТНО`
 
-## Acceptance criteria
+## Критерии приёмки
 
-- [ ] `UNKNOWN`
+- [ ] `НЕИЗВЕСТНО`
 
-## Non-goals
+## Не входит в задачу
 
-- `UNKNOWN`
+- `НЕИЗВЕСТНО`
 
-## Constraints
+## Ограничения
 
-- `UNKNOWN`
+- `НЕИЗВЕСТНО`
 
-## Human decisions already made
+## Уже принятые человеком решения
 
-- `NONE`
+- `НЕТ`
 
-## Approval log
+## Журнал согласований
 
-| Date | Gate | Decision | By | Notes |
+| Дата | Этап | Решение | Кто согласовал | Примечание |
 | --- | --- | --- | --- | --- |
-

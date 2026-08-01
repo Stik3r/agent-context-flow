@@ -1,31 +1,30 @@
-# Decision: <short-title>
+# Решение: <короткое-название>
 
-- Task: `<task-id>`
-- Status: `PROPOSED`
-- Date: `<YYYY-MM-DD>`
-- Approved by: `NOT_APPROVED`
+- Задача: `<task-id>`
+- Состояние: `PROPOSED`
+- Дата: `<YYYY-MM-DD>`
+- Согласовал: `NOT_APPROVED`
 
-## Context
+## Контекст
 
 Какой инвариант, ограничение или необратимый выбор требует решения?
 
-## Options considered
+## Рассмотренные варианты
 
-| Option | Benefits | Costs/risks |
+| Вариант | Преимущества | Цена/риски |
 | --- | --- | --- |
 
-## Decision
+## Решение
 
-`UNKNOWN`
+`НЕИЗВЕСТНО`
 
-## Consequences
+## Последствия
 
-- Positive:
-- Negative:
-- Follow-up/rollback:
+- Положительные:
+- Отрицательные:
+- Дальнейшие действия/откат:
 
-## Evidence and approval
+## Доказательства и согласование
 
-- Evidence:
-- Approval:
-
+- Доказательства:
+- Согласование:

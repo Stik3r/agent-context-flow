@@ -1,57 +1,59 @@
-# Handoff: __TASK_ID__
+# Передача результата: __TASK_ID__
 
-## Outcome
+## Результат
 
 `NOT_IMPLEMENTED`
 
-## Behavior before and after
+## Поведение до и после
 
-- Before:
-- After:
+- До:
+- После:
 
-## Runtime flow
+## Поток выполнения
 
-Опиши entry point → key decisions → state/side effects → response со ссылками на
-paths/symbols.
+Опиши точку входа → ключевые решения → состояние/побочные эффекты → результат со
+ссылками на пути и символы.
 
-## Why this design
+## Почему выбрано это решение
 
-`UNKNOWN`
+`НЕИЗВЕСТНО`
 
-## Preserved invariants and contracts
+## Сохранённые инварианты и контракты
 
-- `UNKNOWN`
+- `НЕИЗВЕСТНО`
 
-## Failure modes
+## Ошибки
 
-| Failure | System behavior | Detection/diagnosis |
+| Ошибка | Поведение системы | Обнаружение/диагностика |
 | --- | --- | --- |
 
-## Evidence
+## Доказательства
 
-| Command/scenario | Result | What it proves | Limitation |
+| Команда/сценарий | Результат | Что доказывает | Ограничение |
 | --- | --- | --- | --- |
 
-## Observability and rollout
+## Наблюдаемость и выпуск
 
-- Logs/metrics/traces:
-- Feature flag/deployment notes:
-- Rollback:
+- Логи/метрики/трассировки:
+- Feature flag/развёртывание:
+- Откат:
 
-## Key files
+## Ключевые файлы
 
-| Path/symbol | Responsibility |
+| Путь/символ | Ответственность |
 | --- | --- |
 
-## Residual risks
+## Остаточные риски
 
-- `UNKNOWN`
+- `НЕИЗВЕСТНО`
 
-## Ownership check
+## Передача контекста
 
-- Date: `NOT_DONE`
-- Human can trace flow: `NO`
-- Human can diagnose failure: `NO`
-- Human can explain rollback: `NO`
-- Notes:
-
+- Режим задачи: `UNCLASSIFIED`
+- Краткое резюме передано: `НЕТ`
+- Выбор человека: `НЕИЗВЕСТНО`
+  (`КОНТЕКСТА_ДОСТАТОЧНО` / `РАЗОБРАТЬ_ПОТОК` /
+  `РАЗОБРАТЬ_ДИАГНОСТИКУ`)
+- Разбор потока проведён: `НЕ_ТРЕБОВАЛСЯ`
+- Разбор диагностики и отката проведён: `НЕ_ТРЕБОВАЛСЯ`
+- Примечание:

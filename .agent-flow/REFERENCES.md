@@ -3,7 +3,7 @@
 Проверено 2026-08-01. Workflow намеренно объединяет практики разных инструментов,
 а не требует конкретного coding agent.
 
-## Durable instructions
+## Постоянные инструкции
 
 - [AGENTS.md open format](https://agents.md/) — предсказуемый repo-level файл
   инструкций для coding agents.
@@ -32,7 +32,7 @@
 
 - [Simon Willison: Your job is to deliver code you have proven to work](https://simonwillison.net/2025/Dec/18/code-proven-to-work/)
   — manual demonstration плюс automated test; агент должен предоставить evidence,
-  а не переносить проверку на reviewer.
+  а не переносить всю проверку на человека без подготовленных доказательств.
 - [Armin Ronacher: Agentic Coding Recommendations](https://lucumr.pocoo.org/2025/6/12/agentic-coding/)
   — простой код, быстрые инструменты, явные логи и observability снижают сложность
   работы и агента, и человека.
@@ -47,5 +47,4 @@
 
 Лимиты 50/300/600 LOC и 5 production-файлов не взяты из универсального
 стандарта. Это стартовые guardrails данного комплекта. Настрой их после 5–10
-реальных задач по времени review, числу возвратов и качеству ownership-check.
-
+реальных задач по времени ревью, числу возвратов и качеству передачи контекста.

@@ -1,52 +1,52 @@
-# Implementation Plan: __TASK_ID__
+# План реализации: __TASK_ID__
 
-- State: `DRAFT`
-- Approved by: `NOT_APPROVED`
-- Approval date: `N/A`
+- Состояние: `DRAFT`
+- Согласовал: `NOT_APPROVED`
+- Дата согласования: `N/A`
 
-## Chosen approach
+## Выбранное решение
 
-`UNKNOWN`
+Кратко, не более 10 строк. Подробности исследования и альтернатив находятся в
+`discovery.md`.
 
-## Approved decisions
+## Согласованные решения
 
-| Decision | Choice | Rationale | Approval |
+| Решение | Выбор | Причина | Согласование |
 | --- | --- | --- | --- |
 
-## Slices
+## Этапы реализации
 
-### Slice 1 — `UNKNOWN`
+### Этап 1 — `НЕИЗВЕСТНО`
 
-- Observable outcome:
-- In scope:
-- Out of scope:
-- Expected production files/LOC:
-- Tests/evidence:
-- Invariants protected:
-- Failure/rollback:
-- Required approval: standard / critical
+- Проверяемый результат:
+- Входит в этап:
+- Не входит в этап:
+- Ожидаемые файлы production-кода и объём:
+- Проверки и доказательства:
+- Защищаемые инварианты:
+- Ошибка и откат:
+- Требуемое согласование: обычное / критическое
 
-### Slice 2 — `REMOVE_IF_NOT_NEEDED`
+### Этап 2 — `УДАЛИТЬ_ЕСЛИ_НЕ_НУЖЕН`
 
-- Observable outcome:
-- In scope:
-- Out of scope:
-- Expected production files/LOC:
-- Tests/evidence:
-- Invariants protected:
-- Failure/rollback:
-- Required approval: standard / critical
+- Проверяемый результат:
+- Входит в этап:
+- Не входит в этап:
+- Ожидаемые файлы production-кода и объём:
+- Проверки и доказательства:
+- Защищаемые инварианты:
+- Ошибка и откат:
+- Требуемое согласование: обычное / критическое
 
-## Full verification plan
+## Полная проверка
 
-- [ ] Unit/contract tests
-- [ ] Integration/e2e tests where relevant
-- [ ] Lint/type/static/build checks
-- [ ] Manual/smoke scenario
+- [ ] Модульные и контрактные тесты
+- [ ] Интеграционные/e2e-тесты, если применимо
+- [ ] Линтер, типы, статический анализ и сборка
+- [ ] Ручной или smoke-сценарий
 - [ ] Quality/security gates
-- [ ] Rollback verified or explained
+- [ ] Откат проверен или объяснён
 
-## Plan risks and assumptions
+## Риски и предположения плана
 
-- `UNKNOWN`
-
+- `НЕИЗВЕСТНО`

@@ -1,29 +1,31 @@
-# Progress: __TASK_ID__
+# Ход работы: __TASK_ID__
 
-- State: `INTAKE`
-- Current slice: `NONE`
-- Last human gate: `NONE`
-- Last updated: `__CREATED_AT__`
+- Состояние: `INTAKE`
+- Текущий этап: `НЕТ`
+- Последнее решение человека: `НЕТ`
+- Обновлено: `__CREATED_AT__`
 
-## Slice log
+## Журнал этапов
 
-| Slice | Commit | Production diff | Checks | Human decision | Notes |
+| Этап | Наблюдаемый коммит человека | Diff production-кода | Проверки | Решение человека | Примечание |
 | --- | --- | --- | --- | --- | --- |
 
-## Current working tree
+## Текущее рабочее дерево
 
-- Expected changes: `NONE`
-- Unrelated/user changes: `UNKNOWN`
+- Базовый коммит: `НЕИЗВЕСТНО`
+- Последний наблюдаемый HEAD: `НЕИЗВЕСТНО`
+- Ожидаемые изменения: `НЕТ`
+- Состояние staged/unstaged: `информационно; не является проблемой само по себе`
+- Изменения вне scope или конфликты: `НЕТ`
 
-## Deviations from plan
+## Отклонения от плана
 
-- `NONE`
+- `НЕТ`
 
-## Blockers
+## Блокеры
 
-- `NONE`
+- `НЕТ`
 
-## Next gate
+## Следующее решение
 
 `COMPLETE_INTAKE`
-

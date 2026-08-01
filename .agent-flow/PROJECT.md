@@ -1,4 +1,4 @@
-# Project Context
+# Контекст проекта
 
 > Статус: `NOT_INITIALIZED`
 >
@@ -13,11 +13,11 @@
 
 ## Карта архитектуры
 
-| Область | Ответственность | Entry points | Основные зависимости |
+| Область | Ответственность | Точки входа | Основные зависимости |
 | --- | --- | --- | --- |
 | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` |
 
-Опиши основной request/event/data flow от входа до внешнего side effect. Ставь
+Опиши основной поток запроса, события или данных от входа до внешнего побочного эффекта. Ставь
 ссылки на реальные пути и символы, а не копируй большие фрагменты кода.
 
 ## Команды проекта
@@ -26,11 +26,11 @@
 | --- | --- | --- | --- |
 | Установка | `UNKNOWN` | Нет | |
 | Локальный запуск | `UNKNOWN` | Нет | |
-| Unit tests | `UNKNOWN` | Нет | |
-| Integration tests | `UNKNOWN` | Нет | |
-| Lint/format | `UNKNOWN` | Нет | |
-| Type/static checks | `UNKNOWN` | Нет | |
-| Build | `UNKNOWN` | Нет | |
+| Модульные тесты | `UNKNOWN` | Нет | |
+| Интеграционные тесты | `UNKNOWN` | Нет | |
+| Линтер/форматирование | `UNKNOWN` | Нет | |
+| Типы/статические проверки | `UNKNOWN` | Нет | |
+| Сборка | `UNKNOWN` | Нет | |
 | Quality/security | `UNKNOWN` | Нет | |
 
 Не помечай команду проверенной, если она не была запущена в доступном окружении.
@@ -40,31 +40,31 @@
 
 Для каждого правила укажи safe path — как правильно менять систему.
 
-| Инвариант | Почему важен | Где реализован | Safe path |
+| Инвариант | Почему важен | Где реализован | Безопасный способ изменения |
 | --- | --- | --- | --- |
 | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` |
 
 ## Внешние контракты
 
-- Публичные API/protocols: `UNKNOWN`
-- Events/queues/webhooks: `UNKNOWN`
-- Database/schema compatibility: `UNKNOWN`
-- Consumers, которые нельзя обнаружить только по коду: `UNKNOWN`
+- Публичные API и протоколы: `UNKNOWN`
+- События, очереди и webhooks: `UNKNOWN`
+- Совместимость базы данных и схемы: `UNKNOWN`
+- Потребители, которых нельзя обнаружить только по коду: `UNKNOWN`
 
 ## Состояние, данные и транзакции
 
 - Источники истины: `UNKNOWN`
 - Границы транзакций и идемпотентность: `UNKNOWN`
-- Consistency/retry/deduplication правила: `UNKNOWN`
-- Retention/PII/secrets требования: `UNKNOWN`
+- Правила согласованности, повторов и дедупликации: `UNKNOWN`
+- Требования к сроку хранения, PII и секретам: `UNKNOWN`
 
 ## Наблюдаемость и эксплуатация
 
 - Ключевые логи и correlation IDs: `UNKNOWN`
-- Метрики/SLO/alerts: `UNKNOWN`
-- Health/readiness checks: `UNKNOWN`
-- Feature flags и rollback mechanism: `UNKNOWN`
-- Runbooks: `UNKNOWN`
+- Метрики, SLO и оповещения: `UNKNOWN`
+- Проверки состояния и готовности: `UNKNOWN`
+- Feature flags и механизм отката: `UNKNOWN`
+- Инструкции для эксплуатации: `UNKNOWN`
 
 ## Чувствительные области
 
@@ -73,20 +73,19 @@ configuration и другие области, где требуется высо
 
 - `UNKNOWN`
 
-## Generated и vendored content
+## Сгенерированный и внешний код
 
 - Пути: `UNKNOWN`
 - Команда генерации: `UNKNOWN`
-- Что проверять вместо построчного review: `UNKNOWN`
+- Что проверять вместо построчного ревью: `UNKNOWN`
 
 ## Известные ограничения и исторические решения
 
 - `UNKNOWN`
 
-## Project-specific overrides
+## Проектные переопределения
 
-- Slice budget: использовать `.agent-flow/config.env`.
-- Дополнительные approval gates: `NONE`
+- Бюджет этапа: использовать `.agent-flow/config.env`.
+- Дополнительные точки согласования: `NONE`
 - Запрещённые изменения: `NONE`
 - Обязательные проверки: `UNKNOWN`
-
