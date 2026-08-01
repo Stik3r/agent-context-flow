@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+flow_dir="$(cd "$script_dir/.." && pwd)"
+if ! repo_root="$(git -C "$flow_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+  repo_root="$(cd "$flow_dir/.." && pwd)"
+fi
+config_file="$flow_dir/config.env"
+
+if [[ -f "$config_file" ]]; then
+  # This is repository-controlled configuration, executed only by explicit use.
+  # shellcheck source=/dev/null
+  source "$config_file"
+fi
+
+slice_budget="${AGENT_FLOW_SLICE_BUDGET:-300}"
+pr_budget="${AGENT_FLOW_PR_BUDGET:-600}"
+file_budget="${AGENT_FLOW_PRODUCTION_FILE_BUDGET:-5}"
+default_diff="${AGENT_FLOW_DEFAULT_DIFF:-HEAD}"
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+validate_integer() {
+  [[ "$2" =~ ^[0-9]+$ ]] || die "$1 must be a non-negative integer, got: $2"
+}
+
+usage() {
+  printf '%s\n' \
+    'Usage: .agent-flow/bin/flow <command> [arguments]' \
+    '' \
+    'Commands:' \
+    '  new <slug>          Create a timestamped task directory from templates' \
+    '  status              Show task states' \
+    '  budget [git-range]  Classify and count changed lines (default: HEAD)' \
+    '  validate            Validate flow files and task structure' \
+    '  help                Show this help'
+}
+
+new_task() {
+  [[ $# -eq 1 ]] || die 'new expects one short slug, for example: add-payment-retry'
+  local raw_slug="$1"
+  local slug
+  slug="$(printf '%s' "$raw_slug" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+  [[ -n "$slug" ]] || die 'slug must contain latin letters or digits'
+
+  local created_at task_id destination template target temporary
+  created_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  task_id="$(date -u '+%Y%m%d-%H%M%S')-$slug"
+  destination="$flow_dir/tasks/$task_id"
+  [[ ! -e "$destination" ]] || die "task already exists: $destination"
+
+  mkdir -p "$destination/decisions"
+  for template in "$flow_dir/templates/task/"*.md; do
+    target="$destination/$(basename "$template")"
+    temporary="$target.tmp.$$"
+    awk -v task_id="$task_id" -v created_at="$created_at" '
+      { gsub(/__TASK_ID__/, task_id); gsub(/__CREATED_AT__/, created_at); print }
+    ' "$template" > "$temporary"
+    mv "$temporary" "$target"
+  done
+
+  printf 'Created %s\n' "$destination"
+  printf 'Next: fill %s/brief.md and follow WORKFLOW.md\n' "$destination"
+}
+
+show_status() {
+  local found=0 brief task state
+  for brief in "$flow_dir/tasks/"*/brief.md; do
+    [[ -e "$brief" ]] || continue
+    found=1
+    task="$(basename "$(dirname "$brief")")"
+    state="$(sed -n 's/^- State: `\([^`]*\)`.*/\1/p' "$brief" | head -n 1)"
+    [[ -n "$state" ]] || state='UNKNOWN'
+    printf '%-48s %s\n' "$task" "$state"
+  done
+  [[ $found -eq 1 ]] || printf 'No task records found.\n'
+}
+
+show_budget() {
+  local diff_range="${1:-$default_diff}"
+  validate_integer AGENT_FLOW_SLICE_BUDGET "$slice_budget"
+  validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
+  validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
+
+  git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || die 'budget requires a git repository'
+
+  local output tracked_output untracked_output status path absolute additions
+  set +e
+  tracked_output="$(git -C "$repo_root" diff --numstat "$diff_range" -- . 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 0 ]] || die "$tracked_output"
+
+  untracked_output=''
+  while IFS= read -r -d '' path; do
+    absolute="$repo_root/$path"
+    [[ -f "$absolute" ]] || continue
+    if [[ ! -s "$absolute" ]] || LC_ALL=C grep -Iq . "$absolute"; then
+      additions="$(awk 'END { print NR + 0 }' "$absolute")"
+    else
+      additions='-'
+    fi
+    untracked_output+="${additions}"$'\t0\t'"${path}"$'\n'
+  done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
+
+  output="$tracked_output"
+  if [[ -n "$untracked_output" ]]; then
+    [[ -z "$output" ]] || output+=$'\n'
+    output+="${untracked_output%$'\n'}"
+  fi
+
+  printf '%s\n' "$output" | awk -F '\t' \
+    -v slice_budget="$slice_budget" \
+    -v pr_budget="$pr_budget" \
+    -v file_budget="$file_budget" '
+    function value(number) { return number == "-" ? 0 : number + 0 }
+    function is_test(path) {
+      return path ~ /(^|\/)(test|tests|spec|specs|__tests__|fixtures)(\/|$)/ ||
+             path ~ /(_test|\.test|\.spec)\.[^.\/]+$/
+    }
+    function is_generated(path) {
+      return path ~ /(^|\/)(generated|dist|build|vendor)(\/|$)/ ||
+             path ~ /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum|Cargo\.lock)$/
+    }
+    {
+      changed = value($1) + value($2)
+      path = $3
+      if (path ~ /^\.agent-flow\// || path == "AGENTS.md") {
+        workflow += changed; workflow_files++
+      } else if (is_generated(path)) {
+        generated += changed; generated_files++
+      } else if (is_test(path)) {
+        tests += changed; test_files++
+      } else {
+        production += changed; production_files++
+      }
+    }
+    END {
+      printf "Production: %d lines in %d files\n", production, production_files
+      printf "Tests:      %d lines in %d files\n", tests, test_files
+      printf "Generated:  %d lines in %d files\n", generated, generated_files
+      printf "Flow docs:  %d lines in %d files\n", workflow, workflow_files
+      printf "Slice budget: %d lines / %d production files\n", slice_budget, file_budget
+      printf "PR budget:    %d production lines\n", pr_budget
+      if (production > pr_budget) {
+        print "RESULT: exceeds PR budget; split or record an approved exception"
+        exit 3
+      }
+      if (production > slice_budget || production_files > file_budget) {
+        print "RESULT: exceeds slice budget; stop at a human gate"
+        exit 2
+      }
+      print "RESULT: within default slice budget"
+    }
+  '
+}
+
+validate_flow() {
+  local required=(
+    "$repo_root/AGENTS.md"
+    "$flow_dir/README.md"
+    "$flow_dir/PROJECT.md"
+    "$flow_dir/POLICY.md"
+    "$flow_dir/WORKFLOW.md"
+    "$flow_dir/CODE_REVIEW.md"
+    "$flow_dir/OWNERSHIP.md"
+    "$flow_dir/config.env"
+  )
+  local item missing=0 task_file task_dir
+  for item in "${required[@]}"; do
+    if [[ ! -s "$item" ]]; then
+      printf 'MISSING %s\n' "$item" >&2
+      missing=1
+    fi
+  done
+
+  for task_dir in "$flow_dir/tasks/"*/; do
+    [[ -d "$task_dir" ]] || continue
+    [[ "$(basename "$task_dir")" == 'tasks' ]] && continue
+    for task_file in brief.md discovery.md plan.md progress.md review.md handoff.md; do
+      if [[ ! -s "$task_dir/$task_file" ]]; then
+        printf 'MISSING %s\n' "$task_dir/$task_file" >&2
+        missing=1
+      fi
+    done
+  done
+
+  validate_integer AGENT_FLOW_SLICE_BUDGET "$slice_budget"
+  validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
+  validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
+  [[ $missing -eq 0 ]] || exit 1
+  printf 'Flow structure is valid.\n'
+}
+
+command="${1:-help}"
+shift || true
+case "$command" in
+  new) new_task "$@" ;;
+  status) [[ $# -eq 0 ]] || die 'status takes no arguments'; show_status ;;
+  budget) [[ $# -le 1 ]] || die 'budget accepts at most one git range'; show_budget "${1:-}" ;;
+  validate) [[ $# -eq 0 ]] || die 'validate takes no arguments'; validate_flow ;;
+  help|-h|--help) usage ;;
+  *) die "unknown command: $command" ;;
+esac
