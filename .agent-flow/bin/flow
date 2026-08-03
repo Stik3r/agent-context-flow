@@ -8,16 +8,25 @@ if ! repo_root="$(git -C "$flow_dir" rev-parse --show-toplevel 2>/dev/null)"; th
 fi
 config_file="$flow_dir/config.env"
 
-if [[ -f "$config_file" ]]; then
-  # This is repository-controlled configuration, executed only by explicit use.
-  # shellcheck source=/dev/null
-  source "$config_file"
-fi
+config_value() {
+  local key="$1" fallback="$2" value=''
+  if [[ -f "$config_file" ]]; then
+    value="$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$config_file" | tail -n 1)"
+    value="${value%$'\r'}"
+    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    if [[ "$value" =~ ^\$\{[A-Z0-9_]+:-([^}]*)\}$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    fi
+  fi
+  printf '%s' "${value:-$fallback}"
+}
 
-slice_budget="${AGENT_FLOW_SLICE_BUDGET:-300}"
-pr_budget="${AGENT_FLOW_PR_BUDGET:-600}"
-file_budget="${AGENT_FLOW_PRODUCTION_FILE_BUDGET:-5}"
-default_diff="${AGENT_FLOW_DEFAULT_DIFF:-HEAD}"
+slice_budget="${AGENT_FLOW_SLICE_BUDGET:-$(config_value AGENT_FLOW_SLICE_BUDGET 300)}"
+pr_budget="${AGENT_FLOW_PR_BUDGET:-$(config_value AGENT_FLOW_PR_BUDGET 600)}"
+file_budget="${AGENT_FLOW_PRODUCTION_FILE_BUDGET:-$(config_value AGENT_FLOW_PRODUCTION_FILE_BUDGET 5)}"
+default_diff="${AGENT_FLOW_DEFAULT_DIFF:-$(config_value AGENT_FLOW_DEFAULT_DIFF HEAD)}"
 
 die() {
   printf 'ошибка: %s\n' "$*" >&2
@@ -207,6 +216,8 @@ validate_flow() {
     "$flow_dir/HUMAN_REVIEW.md"
     "$flow_dir/CONTEXT_HANDOFF.md"
     "$flow_dir/config.env"
+    "$flow_dir/bin/flow"
+    "$flow_dir/bin/flow.ps1"
   )
   local item missing=0 task_file task_dir
   for item in "${required[@]}"; do

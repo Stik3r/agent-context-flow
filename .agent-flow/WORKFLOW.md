@@ -2,6 +2,9 @@
 
 ## Состояния задачи
 
+Во всех командах ниже `flow` означает `.agent-flow/bin/flow` в Bash или
+`& .\.agent-flow\bin\flow.ps1` в PowerShell.
+
 | State | Разрешённые изменения | Обязательный артефакт | Выход из состояния |
 | --- | --- | --- | --- |
 | `INTAKE` | Только `.agent-flow/tasks/<id>/` | `brief.md` | Scope и risk определены |
@@ -32,7 +35,7 @@ Bootstrap не должен перерабатывать приложение и
 
 ## 1. Intake
 
-Создать task-папку через `bin/flow new <slug>` и заполнить `brief.md`:
+Создать task-папку через `flow new <slug>` и заполнить `brief.md`:
 
 - problem и наблюдаемое текущее поведение;
 - desired behavior и acceptance criteria;
@@ -90,7 +93,7 @@ slice должен:
 2. Зафиксировать ожидаемое поведение тестом или воспроизводимым сценарием.
 3. Реализовать минимальное решение в согласованных границах.
 4. Выполнить узкие проверки, затем релевантный полный набор из `PROJECT.md`.
-5. Запустить `bin/flow budget <baseline-commit>` для полного результата задачи,
+5. Запустить `flow budget <baseline-commit>` для полного результата задачи,
    включая staged/unstaged изменения и commits человека.
 6. Просмотреть diff на scope creep, dead code, debug output и случайные файлы.
 7. Обновить `progress.md` и `handoff.md`.

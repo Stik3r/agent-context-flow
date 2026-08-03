@@ -8,7 +8,8 @@
 
 1. Информационной командой проверь, исключены ли `AGENTS.md` и `.agent-flow/`
    локальными Git rules. Если нет, попроси человека выполнить
-   `.agent-flow/bin/flow setup-local`; сам эту команду не запускай.
+   `& .\.agent-flow\bin\flow.ps1 setup-local` в PowerShell либо
+   `.agent-flow/bin/flow setup-local` в Bash; сам эту команду не запускай.
 2. Определи реальные языки, framework, package/build tools и repo layout.
 3. Найди entry points, модули, storage, integrations и deployment artifacts.
 4. Найди CI-команды, test suites, lint/type/build/quality/security checks.

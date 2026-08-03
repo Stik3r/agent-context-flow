@@ -19,7 +19,27 @@ AGENTS.md
 `AGENTS.md` пишется именно в верхнем регистре: это стандартное имя, которое
 автоматически обнаруживает Codex и ряд других coding agents.
 
-Сразу после копирования выполни:
+### PowerShell 5.1 или 7 в Windows
+
+После распаковки выполни из корня проекта:
+
+```powershell
+Unblock-File .\.agent-flow\bin\flow.ps1
+& .\.agent-flow\bin\flow.ps1 setup-local
+& .\.agent-flow\bin\flow.ps1 validate
+```
+
+`Unblock-File` снимает метку загруженного из интернета файла. Если политика
+выполнения всё равно запрещает запуск скриптов, разово используй:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\.agent-flow\bin\flow.ps1 setup-local
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\.agent-flow\bin\flow.ps1 validate
+```
+
+### Bash, zsh и другие POSIX-оболочки
+
+После копирования выполни:
 
 ```bash
 chmod +x .agent-flow/bin/flow
@@ -46,6 +66,19 @@ git rm -r --cached -- AGENTS.md .agent-flow
 Вторая команда меняет index. Перед её выполнением убедись, что эти пути
 действительно не должны храниться в репозитории.
 
+## Обновление существующей установки
+
+Не удаляй каталог `.agent-flow/` целиком: в нём находятся локальная карта
+проекта и история задач. Перед распаковкой новой версии сохрани и затем верни:
+
+- `.agent-flow/PROJECT.md`;
+- `.agent-flow/tasks/`;
+- `.agent-flow/config.env`, если менял бюджеты.
+
+Остальные файлы комплекта можно заменить файлами новой версии. Старый формат
+`config.env` с конструкциями `${NAME:-value}` тоже читается обоими скриптами,
+поэтому немедленная ручная миграция настроек не требуется.
+
 ## Первый запуск
 
 Открой проект с агентом и отправь:
@@ -68,7 +101,15 @@ git rm -r --cached -- AGENTS.md .agent-flow
 Задача: <описание и ожидаемый результат>.
 ```
 
-Или создай папку вручную:
+Или создай папку вручную.
+
+PowerShell:
+
+```powershell
+& .\.agent-flow\bin\flow.ps1 new add-payment-retry
+```
+
+Bash:
 
 ```bash
 .agent-flow/bin/flow new add-payment-retry
@@ -112,28 +153,15 @@ stage, commit, restore, reset, stash, branch, merge, rebase, fetch/pull/push и
 
 ## Полезные команды
 
-```bash
-# Локально исключить flow-файлы без изменения .gitignore
-.agent-flow/bin/flow setup-local
-
-# Создать task-папку
-.agent-flow/bin/flow new <slug>
-
-# Показать состояния задач
-.agent-flow/bin/flow status
-
-# Оценить текущий незакоммиченный diff
-.agent-flow/bin/flow budget
-
-# Оценить весь результат задачи от сохранённого baseline, включая commits
-.agent-flow/bin/flow budget <baseline-commit>
-
-# Оценить diff ветки относительно main
-.agent-flow/bin/flow budget main...HEAD
-
-# Проверить комплект и task-папки
-.agent-flow/bin/flow validate
-```
+| Действие | PowerShell | Bash |
+| --- | --- | --- |
+| Локально исключить flow-файлы | `& .\.agent-flow\bin\flow.ps1 setup-local` | `.agent-flow/bin/flow setup-local` |
+| Создать task-папку | `& .\.agent-flow\bin\flow.ps1 new <slug>` | `.agent-flow/bin/flow new <slug>` |
+| Показать состояния задач | `& .\.agent-flow\bin\flow.ps1 status` | `.agent-flow/bin/flow status` |
+| Оценить незакоммиченный diff | `& .\.agent-flow\bin\flow.ps1 budget` | `.agent-flow/bin/flow budget` |
+| Оценить результат от baseline | `& .\.agent-flow\bin\flow.ps1 budget <baseline-commit>` | `.agent-flow/bin/flow budget <baseline-commit>` |
+| Оценить diff ветки от `main` | `& .\.agent-flow\bin\flow.ps1 budget main...HEAD` | `.agent-flow/bin/flow budget main...HEAD` |
+| Проверить структуру | `& .\.agent-flow\bin\flow.ps1 validate` | `.agent-flow/bin/flow validate` |
 
 Порог можно изменить в `.agent-flow/config.env`. Скрипт считает production,
 tests, generated/lock и workflow-файлы отдельно; это ориентир, а не замена

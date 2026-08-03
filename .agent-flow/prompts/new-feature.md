@@ -4,7 +4,8 @@
 
 1. Если `PROJECT.md` не имеет статуса `HUMAN_APPROVED`, остановись и предложи
    bootstrap.
-2. Создай task-папку командой `.agent-flow/bin/flow new <короткий-slug>`.
+2. Создай task-папку через `flow new <короткий-slug>`, выбрав `flow.ps1` для
+   PowerShell или `flow` для Bash по правилу из `AGENTS.md`.
    Информационными Git-командами запиши в `brief.md` baseline commit и снимок
    уже изменённых путей. Не требуй чистый working tree и не меняй Git index.
 3. Заполни `brief.md` на русском языке из запроса пользователя. Не додумывай
