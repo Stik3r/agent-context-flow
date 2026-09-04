@@ -10,16 +10,19 @@
 | `INTAKE` | Только `.agent-flow/tasks/<id>/` | `brief.md` | Scope и risk определены |
 | `DISCOVERY` | Только task-документы | `discovery.md` | Текущий flow и варианты понятны |
 | `WAIT_PLAN_APPROVAL` | Только task-документы | `plan.md` | Человек явно утвердил plan |
-| `IMPLEMENTING_SLICE_N` | Утверждённый scope slice | code, tests, `progress.md` | Проверки выполнены |
+| `IMPLEMENTING_SLICE_<N>` | Утверждённый scope slice | code, tests, `progress.md` | Проверки выполнены |
 | `WAIT_SLICE_APPROVAL` | Только исправления, явно запрошенные человеком | diff/evidence/handoff update | Человек принял slice или запросил изменения |
 | `VERIFYING` | Только проверки и task-документы | итоговые evidence | Полная проверка завершена |
 | `WAIT_FINAL_HUMAN_REVIEW` | Только явно запрошенные исправления | `final-review.md` | Человек принял результат или запросил изменения |
 | `CONTEXT_HANDOFF` | Только task-документы и объяснение | `handoff.md` | Человеку достаточно контекста; обязательный разбор для `CRITICAL` завершён |
 | `DONE` | Нет | финальные task-документы | Готово к merge/merged |
 | `BLOCKED` | Только безопасная диагностика | причина в `progress.md` | Получено решение/доступ |
+| `ABANDONED` | Нет | причина отказа в `progress.md` | Задача закрыта без реализации |
 
 Нельзя перескакивать из `DISCOVERY` прямо в реализацию. Обещание агента, зелёный
 тест или готовность tool call не заменяют human approval.
+В реальном состоянии `<N>` заменяется положительным номером, например
+`IMPLEMENTING_SLICE_1`.
 
 ## 0. Project bootstrap
 

@@ -161,11 +161,17 @@ stage, commit, restore, reset, stash, branch, merge, rebase, fetch/pull/push и
 | Оценить незакоммиченный diff | `& .\.agent-flow\bin\flow.ps1 budget` | `.agent-flow/bin/flow budget` |
 | Оценить результат от baseline | `& .\.agent-flow\bin\flow.ps1 budget <baseline-commit>` | `.agent-flow/bin/flow budget <baseline-commit>` |
 | Оценить diff ветки от `main` | `& .\.agent-flow\bin\flow.ps1 budget main...HEAD` | `.agent-flow/bin/flow budget main...HEAD` |
-| Проверить структуру | `& .\.agent-flow\bin\flow.ps1 validate` | `.agent-flow/bin/flow validate` |
+| Проверить структуру и состояния | `& .\.agent-flow\bin\flow.ps1 validate` | `.agent-flow/bin/flow validate` |
 
 Порог можно изменить в `.agent-flow/config.env`. Скрипт считает production,
 tests, generated/lock и workflow-файлы отдельно; это ориентир, а не замена
 инженерному суждению.
+
+`validate` проверяет комплектность flow, допустимость и совпадение состояния в
+`brief.md` и `progress.md`, замену служебных маркеров шаблона и обязательные
+согласования перед реализацией, handoff и `DONE`. Незавершённая задача в
+состоянии `INTAKE` валидна. Статус `NOT_INITIALIZED` в `PROJECT.md` выводится как
+предупреждение и не мешает первичной установке до bootstrap.
 
 ## Хранение task-документов
 

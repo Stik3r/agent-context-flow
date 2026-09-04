@@ -126,7 +126,7 @@ function Show-Usage {
         "  new <slug>         Создать task-папку из шаблонов",
         "  status             Показать состояния задач",
         "  budget [git-range] Классифицировать и посчитать изменённые строки (по умолчанию HEAD)",
-        "  validate           Проверить файлы flow и структуру задач",
+        "  validate           Проверить файлы flow, состояния и обязательные gates",
         "  help               Показать эту справку"
     ) | ForEach-Object { Write-Output $_ }
 }
@@ -317,6 +317,12 @@ function Show-FlowBudget {
     }
 
     $DiffRange = if ($Arguments.Count -eq 1) { $Arguments[0] } else { $DefaultDiff }
+    if ([string]::IsNullOrWhiteSpace($DiffRange)) {
+        $DiffRange = $DefaultDiff
+    }
+    if ($DiffRange.StartsWith("-", [StringComparison]::Ordinal)) {
+        Stop-Flow "git-range не может начинаться с дефиса"
+    }
     $DiffResult = Invoke-FlowGit -Arguments @("diff", "--numstat", $DiffRange, "--", ".")
     $Records = New-Object System.Collections.Generic.List[object]
 
@@ -407,6 +413,30 @@ function Test-NonEmptyFile {
         (Get-Item -LiteralPath $Path).Length -gt 0
 }
 
+function Get-TaskState {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    foreach ($Line in [System.IO.File]::ReadAllLines($Path)) {
+        if ($Line -match '^- (?:Состояние|State): `([^`]*)`') {
+            return $Matches[1]
+        }
+    }
+    return ""
+}
+
+function Test-IsValidTaskState {
+    param([string]$State)
+
+    if ($State -in @(
+        "INTAKE", "DISCOVERY", "WAIT_PLAN_APPROVAL", "WAIT_SLICE_APPROVAL",
+        "VERIFYING", "WAIT_FINAL_HUMAN_REVIEW", "CONTEXT_HANDOFF", "BLOCKED",
+        "DONE", "ABANDONED"
+    )) {
+        return $true
+    }
+    return $State -match '^IMPLEMENTING_SLICE_[1-9][0-9]*$'
+}
+
 function Test-FlowStructure {
     $Required = @(
         (Join-Path $RepositoryRoot "AGENTS.md"),
@@ -416,16 +446,32 @@ function Test-FlowStructure {
         (Join-Path $FlowDirectory "WORKFLOW.md"),
         (Join-Path $FlowDirectory "HUMAN_REVIEW.md"),
         (Join-Path $FlowDirectory "CONTEXT_HANDOFF.md"),
+        (Join-Path $FlowDirectory "REFERENCES.md"),
         (Join-Path $FlowDirectory "config.env"),
         (Join-Path $ScriptDirectory "flow"),
-        (Join-Path $ScriptDirectory "flow.ps1")
+        (Join-Path $ScriptDirectory "flow.ps1"),
+        (Join-Path $FlowDirectory "prompts/bootstrap.md"),
+        (Join-Path $FlowDirectory "prompts/debug.md"),
+        (Join-Path $FlowDirectory "prompts/finalize.md"),
+        (Join-Path $FlowDirectory "prompts/new-feature.md"),
+        (Join-Path $FlowDirectory "prompts/resume.md"),
+        (Join-Path $FlowDirectory "tasks/README.md"),
+        (Join-Path $FlowDirectory "templates/decision.md"),
+        (Join-Path $FlowDirectory "templates/pr-description.md"),
+        (Join-Path $FlowDirectory "templates/task/brief.md"),
+        (Join-Path $FlowDirectory "templates/task/discovery.md"),
+        (Join-Path $FlowDirectory "templates/task/final-review.md"),
+        (Join-Path $FlowDirectory "templates/task/handoff.md"),
+        (Join-Path $FlowDirectory "templates/task/plan.md"),
+        (Join-Path $FlowDirectory "templates/task/progress.md")
     )
 
-    $Missing = $false
+    $Issues = $false
+    $Warnings = $false
     foreach ($Item in $Required) {
         if (-not (Test-NonEmptyFile $Item)) {
             [Console]::Error.WriteLine("ОТСУТСТВУЕТ $Item")
-            $Missing = $true
+            $Issues = $true
         }
     }
 
@@ -436,7 +482,7 @@ function Test-FlowStructure {
                 $TaskPath = Join-Path $TaskDirectory.FullName $TaskFile
                 if (-not (Test-NonEmptyFile $TaskPath)) {
                     [Console]::Error.WriteLine("ОТСУТСТВУЕТ $TaskPath")
-                    $Missing = $true
+                    $Issues = $true
                 }
             }
 
@@ -448,7 +494,100 @@ function Test-FlowStructure {
                 }
                 else {
                     [Console]::Error.WriteLine("ОТСУТСТВУЕТ $FinalReview")
-                    $Missing = $true
+                    $Issues = $true
+                }
+            }
+
+            $HasTemplateMarker = $false
+            foreach ($MarkdownFile in Get-ChildItem -LiteralPath $TaskDirectory.FullName -Recurse -Filter "*.md" -File) {
+                $MarkdownContent = [System.IO.File]::ReadAllText($MarkdownFile.FullName)
+                if ($MarkdownContent.Contains("__TASK_ID__") -or
+                    $MarkdownContent.Contains("__CREATED_AT__")) {
+                    $HasTemplateMarker = $true
+                    break
+                }
+            }
+            if ($HasTemplateMarker) {
+                [Console]::Error.WriteLine("НЕЗАМЕНЁННЫЙ МАРКЕР ШАБЛОНА $($TaskDirectory.FullName)")
+                $Issues = $true
+            }
+
+            $Brief = Join-Path $TaskDirectory.FullName "brief.md"
+            $Progress = Join-Path $TaskDirectory.FullName "progress.md"
+            if (-not (Test-NonEmptyFile $Brief) -or -not (Test-NonEmptyFile $Progress)) {
+                continue
+            }
+
+            $BriefState = Get-TaskState $Brief
+            $ProgressState = Get-TaskState $Progress
+            if (-not (Test-IsValidTaskState $BriefState)) {
+                $ShownState = if ([string]::IsNullOrWhiteSpace($BriefState)) { "ОТСУТСТВУЕТ" } else { $BriefState }
+                [Console]::Error.WriteLine("НЕДОПУСТИМОЕ СОСТОЯНИЕ ${Brief}: $ShownState")
+                $Issues = $true
+                continue
+            }
+            if (-not (Test-IsValidTaskState $ProgressState)) {
+                $ShownState = if ([string]::IsNullOrWhiteSpace($ProgressState)) { "ОТСУТСТВУЕТ" } else { $ProgressState }
+                [Console]::Error.WriteLine("НЕДОПУСТИМОЕ СОСТОЯНИЕ ${Progress}: $ShownState")
+                $Issues = $true
+                continue
+            }
+            if ($BriefState -ne $ProgressState) {
+                [Console]::Error.WriteLine("РАССИНХРОНИЗАЦИЯ СОСТОЯНИЯ $($TaskDirectory.FullName): brief=$BriefState, progress=$ProgressState")
+                $Issues = $true
+            }
+
+            $NeedsApprovedPlan = $BriefState -match '^IMPLEMENTING_SLICE_' -or
+                $BriefState -in @(
+                    "WAIT_SLICE_APPROVAL", "VERIFYING", "WAIT_FINAL_HUMAN_REVIEW",
+                    "CONTEXT_HANDOFF", "DONE"
+                )
+            if ($NeedsApprovedPlan) {
+                $Plan = Join-Path $TaskDirectory.FullName "plan.md"
+                if (Test-NonEmptyFile $Plan) {
+                    $PlanContent = [System.IO.File]::ReadAllText($Plan)
+                    if ($PlanContent.Contains('- Согласовал: `NOT_APPROVED`') -or
+                        $PlanContent.Contains('- Состояние: `DRAFT`')) {
+                        [Console]::Error.WriteLine("НЕ ПРИНЯТ ПЛАН $Plan")
+                        $Issues = $true
+                    }
+                }
+            }
+
+            if ($BriefState -in @("WAIT_FINAL_HUMAN_REVIEW", "CONTEXT_HANDOFF", "DONE")) {
+                if (-not (Test-NonEmptyFile $FinalReview)) {
+                    [Console]::Error.WriteLine("НЕ ГОТОВ ПАКЕТ ФИНАЛЬНОГО РЕВЬЮ $FinalReview")
+                    $Issues = $true
+                }
+                else {
+                    $FinalReviewContent = [System.IO.File]::ReadAllText($FinalReview)
+                    if ($FinalReviewContent.Contains('- Состояние: `NOT_READY`') -or
+                        $FinalReviewContent.Contains('`НЕ_ПРОВЕРЕНО`')) {
+                        [Console]::Error.WriteLine("НЕ ГОТОВ ПАКЕТ ФИНАЛЬНОГО РЕВЬЮ $FinalReview")
+                        $Issues = $true
+                    }
+                }
+            }
+
+            if ($BriefState -in @("CONTEXT_HANDOFF", "DONE")) {
+                if (Test-NonEmptyFile $FinalReview) {
+                    $FinalReviewContent = [System.IO.File]::ReadAllText($FinalReview)
+                    if ($FinalReviewContent.Contains('- Решение человека: `NOT_REVIEWED`')) {
+                        [Console]::Error.WriteLine("НЕ ПРИНЯТО ФИНАЛЬНОЕ РЕВЬЮ $FinalReview")
+                        $Issues = $true
+                    }
+                }
+            }
+
+            if ($BriefState -eq "DONE") {
+                $Handoff = Join-Path $TaskDirectory.FullName "handoff.md"
+                if (Test-NonEmptyFile $Handoff) {
+                    $HandoffContent = [System.IO.File]::ReadAllText($Handoff)
+                    if ($HandoffContent.Contains('`NOT_IMPLEMENTED`') -or
+                        $HandoffContent.Contains('- Выбор человека: `НЕИЗВЕСТНО`')) {
+                        [Console]::Error.WriteLine("НЕ ЗАВЕРШЕНА ПЕРЕДАЧА КОНТЕКСТА $Handoff")
+                        $Issues = $true
+                    }
                 }
             }
         }
@@ -458,10 +597,22 @@ function Test-FlowStructure {
     Assert-NonNegativeInteger "AGENT_FLOW_PR_BUDGET" $PrBudget
     Assert-NonNegativeInteger "AGENT_FLOW_PRODUCTION_FILE_BUDGET" $FileBudget
 
-    if ($Missing) {
+    $ProjectFile = Join-Path $FlowDirectory "PROJECT.md"
+    if ((Test-NonEmptyFile $ProjectFile) -and
+        ([System.IO.File]::ReadAllText($ProjectFile)).Contains('Статус: `NOT_INITIALIZED`')) {
+        [Console]::Error.WriteLine("ПРЕДУПРЕЖДЕНИЕ: PROJECT.md ещё не инициализирован.")
+        $Warnings = $true
+    }
+
+    if ($Issues) {
         exit 1
     }
-    Write-Output "Структура flow корректна."
+    if ($Warnings) {
+        Write-Output "Структура и состояния flow корректны; есть предупреждения."
+    }
+    else {
+        Write-Output "Структура и состояния flow корректны."
+    }
 }
 
 $RemainingArguments = @($CommandArguments)

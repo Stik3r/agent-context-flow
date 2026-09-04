@@ -46,7 +46,7 @@ usage() {
     '  new <slug>         Создать task-папку из шаблонов' \
     '  status             Показать состояния задач' \
     '  budget [git-range] Классифицировать и посчитать изменённые строки (по умолчанию HEAD)' \
-    '  validate           Проверить файлы flow и структуру задач' \
+    '  validate           Проверить файлы flow, состояния и обязательные gates' \
     '  help               Показать эту справку'
 }
 
@@ -132,6 +132,7 @@ show_budget() {
   validate_integer AGENT_FLOW_SLICE_BUDGET "$slice_budget"
   validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
   validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
+  [[ "$diff_range" != -* ]] || die 'git-range не может начинаться с дефиса'
 
   git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || die 'budget требует Git-репозиторий'
 
@@ -206,6 +207,23 @@ show_budget() {
   '
 }
 
+task_state_from() {
+  sed -n \
+    -e 's/^- Состояние: `\([^`]*\)`.*/\1/p' \
+    -e 's/^- State: `\([^`]*\)`.*/\1/p' \
+    "$1" | head -n 1
+}
+
+valid_task_state() {
+  case "$1" in
+    INTAKE|DISCOVERY|WAIT_PLAN_APPROVAL|WAIT_SLICE_APPROVAL|VERIFYING|\
+      WAIT_FINAL_HUMAN_REVIEW|CONTEXT_HANDOFF|BLOCKED|DONE|ABANDONED)
+      return 0
+      ;;
+  esac
+  [[ "$1" =~ ^IMPLEMENTING_SLICE_[1-9][0-9]*$ ]]
+}
+
 validate_flow() {
   local required=(
     "$repo_root/AGENTS.md"
@@ -215,15 +233,30 @@ validate_flow() {
     "$flow_dir/WORKFLOW.md"
     "$flow_dir/HUMAN_REVIEW.md"
     "$flow_dir/CONTEXT_HANDOFF.md"
+    "$flow_dir/REFERENCES.md"
     "$flow_dir/config.env"
     "$flow_dir/bin/flow"
     "$flow_dir/bin/flow.ps1"
+    "$flow_dir/prompts/bootstrap.md"
+    "$flow_dir/prompts/debug.md"
+    "$flow_dir/prompts/finalize.md"
+    "$flow_dir/prompts/new-feature.md"
+    "$flow_dir/prompts/resume.md"
+    "$flow_dir/tasks/README.md"
+    "$flow_dir/templates/decision.md"
+    "$flow_dir/templates/pr-description.md"
+    "$flow_dir/templates/task/brief.md"
+    "$flow_dir/templates/task/discovery.md"
+    "$flow_dir/templates/task/final-review.md"
+    "$flow_dir/templates/task/handoff.md"
+    "$flow_dir/templates/task/plan.md"
+    "$flow_dir/templates/task/progress.md"
   )
-  local item missing=0 task_file task_dir
+  local item issues=0 warnings=0 task_file task_dir brief_state progress_state
   for item in "${required[@]}"; do
     if [[ ! -s "$item" ]]; then
       printf 'ОТСУТСТВУЕТ %s\n' "$item" >&2
-      missing=1
+      issues=1
     fi
   done
 
@@ -233,7 +266,7 @@ validate_flow() {
     for task_file in brief.md discovery.md plan.md progress.md handoff.md; do
       if [[ ! -s "$task_dir/$task_file" ]]; then
         printf 'ОТСУТСТВУЕТ %s\n' "$task_dir/$task_file" >&2
-        missing=1
+        issues=1
       fi
     done
     if [[ ! -s "$task_dir/final-review.md" ]]; then
@@ -242,16 +275,92 @@ validate_flow() {
           "${task_dir%/}/review.md" >&2
       else
         printf 'ОТСУТСТВУЕТ %s\n' "${task_dir%/}/final-review.md" >&2
-        missing=1
+        issues=1
       fi
+    fi
+
+    if grep -R -q -F -e '__TASK_ID__' -e '__CREATED_AT__' "$task_dir"; then
+      printf 'НЕЗАМЕНЁННЫЙ МАРКЕР ШАБЛОНА %s\n' "${task_dir%/}" >&2
+      issues=1
+    fi
+
+    [[ -s "$task_dir/brief.md" && -s "$task_dir/progress.md" ]] || continue
+    brief_state="$(task_state_from "$task_dir/brief.md")"
+    progress_state="$(task_state_from "$task_dir/progress.md")"
+
+    if [[ -z "$brief_state" ]] || ! valid_task_state "$brief_state"; then
+      printf 'НЕДОПУСТИМОЕ СОСТОЯНИЕ %s: %s\n' \
+        "${task_dir%/}/brief.md" "${brief_state:-ОТСУТСТВУЕТ}" >&2
+      issues=1
+      continue
+    fi
+    if [[ -z "$progress_state" ]] || ! valid_task_state "$progress_state"; then
+      printf 'НЕДОПУСТИМОЕ СОСТОЯНИЕ %s: %s\n' \
+        "${task_dir%/}/progress.md" "${progress_state:-ОТСУТСТВУЕТ}" >&2
+      issues=1
+      continue
+    fi
+    if [[ "$brief_state" != "$progress_state" ]]; then
+      printf 'РАССИНХРОНИЗАЦИЯ СОСТОЯНИЯ %s: brief=%s, progress=%s\n' \
+        "${task_dir%/}" "$brief_state" "$progress_state" >&2
+      issues=1
+    fi
+
+    case "$brief_state" in
+      IMPLEMENTING_SLICE_*|WAIT_SLICE_APPROVAL|VERIFYING|WAIT_FINAL_HUMAN_REVIEW|\
+        CONTEXT_HANDOFF|DONE)
+        if [[ -s "$task_dir/plan.md" ]] &&
+          { grep -Fq -- '- Согласовал: `NOT_APPROVED`' "$task_dir/plan.md" ||
+            grep -Fq -- '- Состояние: `DRAFT`' "$task_dir/plan.md"; }; then
+          printf 'НЕ ПРИНЯТ ПЛАН %s\n' "${task_dir%/}/plan.md" >&2
+          issues=1
+        fi
+        ;;
+    esac
+
+    case "$brief_state" in
+      WAIT_FINAL_HUMAN_REVIEW|CONTEXT_HANDOFF|DONE)
+        if [[ ! -s "$task_dir/final-review.md" ]] ||
+          grep -Fq -- '- Состояние: `NOT_READY`' "$task_dir/final-review.md" ||
+          grep -Fq '`НЕ_ПРОВЕРЕНО`' "$task_dir/final-review.md"; then
+          printf 'НЕ ГОТОВ ПАКЕТ ФИНАЛЬНОГО РЕВЬЮ %s\n' "${task_dir%/}/final-review.md" >&2
+          issues=1
+        fi
+        ;;
+    esac
+
+    case "$brief_state" in
+      CONTEXT_HANDOFF|DONE)
+        if [[ -s "$task_dir/final-review.md" ]] &&
+          grep -Fq -- '- Решение человека: `NOT_REVIEWED`' "$task_dir/final-review.md"; then
+          printf 'НЕ ПРИНЯТО ФИНАЛЬНОЕ РЕВЬЮ %s\n' "${task_dir%/}/final-review.md" >&2
+          issues=1
+        fi
+        ;;
+    esac
+
+    if [[ "$brief_state" == 'DONE' && -s "$task_dir/handoff.md" ]] &&
+      { grep -Fq '`NOT_IMPLEMENTED`' "$task_dir/handoff.md" ||
+        grep -Fq -- '- Выбор человека: `НЕИЗВЕСТНО`' "$task_dir/handoff.md"; }; then
+      printf 'НЕ ЗАВЕРШЕНА ПЕРЕДАЧА КОНТЕКСТА %s\n' "${task_dir%/}/handoff.md" >&2
+      issues=1
     fi
   done
 
   validate_integer AGENT_FLOW_SLICE_BUDGET "$slice_budget"
   validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
   validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
-  [[ $missing -eq 0 ]] || exit 1
-  printf 'Структура flow корректна.\n'
+  if [[ -s "$flow_dir/PROJECT.md" ]] &&
+    grep -Fq 'Статус: `NOT_INITIALIZED`' "$flow_dir/PROJECT.md"; then
+    printf 'ПРЕДУПРЕЖДЕНИЕ: PROJECT.md ещё не инициализирован.\n' >&2
+    warnings=1
+  fi
+  [[ $issues -eq 0 ]] || exit 1
+  if [[ $warnings -eq 1 ]]; then
+    printf 'Структура и состояния flow корректны; есть предупреждения.\n'
+  else
+    printf 'Структура и состояния flow корректны.\n'
+  fi
 }
 
 command="${1:-help}"
