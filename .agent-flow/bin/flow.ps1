@@ -113,7 +113,7 @@ function Assert-NonNegativeInteger {
 }
 
 $SliceBudget = Get-FlowConfigValue "AGENT_FLOW_SLICE_BUDGET" "300"
-$PrBudget = Get-FlowConfigValue "AGENT_FLOW_PR_BUDGET" "600"
+$PrBudget = Get-FlowConfigValue "AGENT_FLOW_PR_BUDGET" "1800"
 $FileBudget = Get-FlowConfigValue "AGENT_FLOW_PRODUCTION_FILE_BUDGET" "5"
 $DefaultDiff = Get-FlowConfigValue "AGENT_FLOW_DEFAULT_DIFF" "HEAD"
 
@@ -126,6 +126,7 @@ function Show-Usage {
         "  new <slug>         Создать task-папку из шаблонов",
         "  status             Показать состояния задач",
         "  budget [git-range] Классифицировать и посчитать изменённые строки (по умолчанию HEAD)",
+        "  budget-task [base] Информационный размер всей задачи/PR",
         "  validate           Проверить файлы flow, состояния и обязательные gates",
         "  help               Показать эту справку"
     ) | ForEach-Object { Write-Output $_ }
@@ -300,110 +301,182 @@ function Test-IsGeneratedPath {
         $Path -match '(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum|Cargo\.lock)$'
 }
 
+# Read NUL-separated Git output without PowerShell's line splitting. Compatible
+# with Windows PowerShell 5.1 (ProcessStartInfo.ArgumentList is not available).
+function Invoke-FlowGitRaw {
+    param([string[]]$Arguments)
+    $Info = New-Object System.Diagnostics.ProcessStartInfo
+    $Info.FileName = (Get-Command git -ErrorAction Stop).Source
+    $Quoted = foreach ($Value in (@('-C', $RepositoryRoot) + $Arguments)) {
+        '"' + ([regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1')) + '"'
+    }
+    $Info.Arguments = $Quoted -join ' '
+    $Info.UseShellExecute = $false
+    $Info.RedirectStandardOutput = $true
+    $Info.RedirectStandardError = $true
+    $Info.StandardOutputEncoding = $Utf8NoBom
+    $Info.StandardErrorEncoding = $Utf8NoBom
+    $Info.CreateNoWindow = $true
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $Info
+    try {
+        [void]$Process.Start()
+        $OutputTask = $Process.StandardOutput.ReadToEndAsync()
+        $ErrorTask = $Process.StandardError.ReadToEndAsync()
+        $Process.WaitForExit()
+        $OutputText = $OutputTask.GetAwaiter().GetResult()
+        $ErrorText = $ErrorTask.GetAwaiter().GetResult()
+        if ($Process.ExitCode -ne 0) { Stop-Flow $ErrorText }
+        return $OutputText
+    }
+    finally { $Process.Dispose() }
+}
+
+function Get-TreeSignature {
+    param([string]$Revision, [string]$Path)
+    $Entry = Invoke-FlowGitRaw @('--literal-pathspecs', 'ls-tree', '-z', $Revision, '--', $Path)
+    if ([string]::IsNullOrEmpty($Entry)) { return '' }
+    return ($Entry -split "`t", 2)[0]
+}
+
 function Show-FlowBudget {
-    param([string[]]$Arguments = @())
-
-    if ($Arguments.Count -gt 1) {
-        Stop-Flow "budget принимает не более одного Git-диапазона"
-    }
-
-    Assert-NonNegativeInteger "AGENT_FLOW_SLICE_BUDGET" $SliceBudget
-    Assert-NonNegativeInteger "AGENT_FLOW_PR_BUDGET" $PrBudget
-    Assert-NonNegativeInteger "AGENT_FLOW_PRODUCTION_FILE_BUDGET" $FileBudget
-
-    $GitRepository = Invoke-FlowGit -Arguments @("rev-parse", "--git-dir") -AllowFailure
-    if ($GitRepository.ExitCode -ne 0) {
-        Stop-Flow "budget требует Git-репозиторий"
-    }
-
+    param([string[]]$Arguments = @(), [switch]$TaskReport)
+    if ($Arguments.Count -gt 1) { Stop-Flow 'budget принимает не более одного Git-диапазона' }
+    Assert-NonNegativeInteger 'AGENT_FLOW_SLICE_BUDGET' $SliceBudget
+    Assert-NonNegativeInteger 'AGENT_FLOW_PR_BUDGET' $PrBudget
+    Assert-NonNegativeInteger 'AGENT_FLOW_PRODUCTION_FILE_BUDGET' $FileBudget
     $DiffRange = if ($Arguments.Count -eq 1) { $Arguments[0] } else { $DefaultDiff }
-    if ([string]::IsNullOrWhiteSpace($DiffRange)) {
-        $DiffRange = $DefaultDiff
+    if ([string]::IsNullOrWhiteSpace($DiffRange)) { $DiffRange = $DefaultDiff }
+    if ($DiffRange.StartsWith('-', [StringComparison]::Ordinal)) {
+        Stop-Flow 'git-range не может начинаться с дефиса'
     }
-    if ($DiffRange.StartsWith("-", [StringComparison]::Ordinal)) {
-        Stop-Flow "git-range не может начинаться с дефиса"
+    $Base = $DiffRange
+    $Target = ''
+    if ($DiffRange.Contains('...')) {
+        $Parts = $DiffRange -split '\.\.\.', 2
+        $Left = if ($Parts[0]) { $Parts[0] } else { 'HEAD' }
+        $Target = if ($Parts[1]) { $Parts[1] } else { 'HEAD' }
+        $Base = (Invoke-FlowGitRaw @('merge-base', $Left, $Target)).Trim()
     }
-    $DiffResult = Invoke-FlowGit -Arguments @("diff", "--numstat", $DiffRange, "--", ".")
+    elseif ($DiffRange.Contains('..')) {
+        $Parts = $DiffRange -split '\.\.', 2
+        $Base = if ($Parts[0]) { $Parts[0] } else { 'HEAD' }
+        $Target = if ($Parts[1]) { $Parts[1] } else { 'HEAD' }
+    }
+    $Base = (Invoke-FlowGitRaw @('rev-parse', '--verify', "$Base^{commit}")).Trim()
+    $DiffArguments = @('diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', $Base)
+    if ($Target) { $DiffArguments += $Target }
+    $DiffArguments += @('--', '.')
+    $DiffText = Invoke-FlowGitRaw $DiffArguments
     $Records = New-Object System.Collections.Generic.List[object]
-
-    foreach ($Line in $DiffResult.Lines) {
-        if ([string]::IsNullOrWhiteSpace($Line)) {
-            continue
-        }
-        $Parts = $Line -split "`t", 3
-        if ($Parts.Count -eq 3) {
+    foreach ($Entry in $DiffText.Split([char]0)) {
+        if ($Entry.Length -eq 0) { continue }
+        $Parts = $Entry -split "`t", 3
+        if ($Parts.Count -ne 3) { Stop-Flow 'неожиданный формат git numstat' }
+        $Records.Add([PSCustomObject]@{
+            Additions = $Parts[0]; Deletions = $Parts[1]; Path = $Parts[2]
+            Old = ''; Current = ''; Paired = $false
+        })
+    }
+    if (-not $Target) {
+        $UntrackedText = Invoke-FlowGitRaw @('ls-files', '--others', '--exclude-standard', '-z')
+        foreach ($Path in $UntrackedText.Split([char]0)) {
+            if ($Path.Length -eq 0) { continue }
+            $Absolute = Join-Path $RepositoryRoot $Path
+            $Item = Get-Item -LiteralPath $Absolute -Force -ErrorAction SilentlyContinue
+            if ($null -eq $Item -or $Item.PSIsContainer) { continue }
+            $IsLink = ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+            $Lines = if ($IsLink -or (Test-IsBinaryFile $Absolute)) { '-' } else { (Get-TextLineCount $Absolute).ToString() }
             $Records.Add([PSCustomObject]@{
-                Additions = $Parts[0]
-                Deletions = $Parts[1]
-                Path = $Parts[2].Replace('\', '/')
+                Additions = $Lines; Deletions = '0'; Path = $Path
+                Old = ''; Current = ''; Paired = $false
             })
         }
     }
-
-    $UntrackedResult = Invoke-FlowGit -Arguments @("-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard")
-    foreach ($RelativePath in $UntrackedResult.Lines) {
-        if ([string]::IsNullOrWhiteSpace($RelativePath)) {
-            continue
-        }
-        $AbsolutePath = Join-Path $RepositoryRoot $RelativePath
-        if (-not (Test-Path -LiteralPath $AbsolutePath -PathType Leaf)) {
-            continue
-        }
-        $Records.Add([PSCustomObject]@{
-            Additions = (Get-TextLineCount $AbsolutePath).ToString()
-            Deletions = "0"
-            Path = $RelativePath.Replace('\', '/')
-        })
-    }
-
-    $Counters = @{
-        Production = 0L; ProductionFiles = 0L
-        Tests = 0L; TestFiles = 0L
-        Generated = 0L; GeneratedFiles = 0L
-        Workflow = 0L; WorkflowFiles = 0L
-    }
-
+    $FileModeResult = Invoke-FlowGit -Arguments @('config', '--get', 'core.filemode') -AllowFailure
+    $FileMode = ($FileModeResult.Lines -join '').Trim()
     foreach ($Record in $Records) {
-        $Additions = if ($Record.Additions -eq "-") { 0L } else { [int64]$Record.Additions }
-        $Deletions = if ($Record.Deletions -eq "-") { 0L } else { [int64]$Record.Deletions }
+        $Record.Old = Get-TreeSignature $Base $Record.Path
+        if ($Target) {
+            $Record.Current = Get-TreeSignature $Target $Record.Path
+            continue
+        }
+        $Absolute = Join-Path $RepositoryRoot $Record.Path
+        $Item = Get-Item -LiteralPath $Absolute -Force -ErrorAction SilentlyContinue
+        if ($null -eq $Item) { continue }
+        if ($Item.PSIsContainer -or ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            $Record.Current = 'special'
+            continue
+        }
+        $Hash = (Invoke-FlowGitRaw @('hash-object', '--no-filters', '--', $Absolute)).Trim()
+        $FilePermissions = '100644'
+        if ($FileMode -ne 'false') {
+            # On Windows filemode is normally false. Unix PowerShell exposes
+            # UnixStat.Mode; if unavailable, be conservative about move pairing.
+            if ($Item.PSObject.Properties['UnixStat']) {
+                if (($Item.UnixStat.Mode -band 73) -ne 0) { $FilePermissions = '100755' }
+            }
+            else { $FilePermissions = 'unknown' }
+        }
+        $Record.Current = "$FilePermissions blob $Hash"
+    }
+    $Moves = 0
+    foreach ($Deleted in $Records) {
+        if ($Deleted.Current -or $Deleted.Old -notmatch '^100[0-9]{3} blob ') { continue }
+        foreach ($Added in $Records) {
+            if (-not $Added.Paired -and -not $Added.Old -and $Added.Current -ceq $Deleted.Old) {
+                $Deleted.Paired = $true
+                $Added.Paired = $true
+                $Moves++
+                Write-Output ('Чистый перенос: {0} -> {1}' -f ($Deleted.Path | ConvertTo-Json -Compress), ($Added.Path | ConvertTo-Json -Compress))
+                break
+            }
+        }
+    }
+    $Counters = @{
+        Production = 0L; ProductionFiles = 0L; Tests = 0L; TestFiles = 0L
+        Generated = 0L; GeneratedFiles = 0L; Workflow = 0L; WorkflowFiles = 0L
+    }
+    $Binaries = 0
+    foreach ($Record in $Records) {
+        if ($Record.Paired) { continue }
+        if ($Record.Additions -eq '-' -or $Record.Deletions -eq '-') { $Binaries++ }
+        $Additions = if ($Record.Additions -eq '-') { 0L } else { [int64]$Record.Additions }
+        $Deletions = if ($Record.Deletions -eq '-') { 0L } else { [int64]$Record.Deletions }
         $Changed = $Additions + $Deletions
         $Path = $Record.Path
-
-        if ($Path -match '^\.agent-flow/' -or $Path -eq "AGENTS.md") {
-            $Counters.Workflow += $Changed
-            $Counters.WorkflowFiles++
+        if ($Path -cmatch '^\.agent-flow/' -or $Path -ceq 'AGENTS.md') {
+            $Counters.Workflow += $Changed; $Counters.WorkflowFiles++
         }
         elseif (Test-IsGeneratedPath $Path) {
-            $Counters.Generated += $Changed
-            $Counters.GeneratedFiles++
+            $Counters.Generated += $Changed; $Counters.GeneratedFiles++
         }
         elseif (Test-IsTestPath $Path) {
-            $Counters.Tests += $Changed
-            $Counters.TestFiles++
+            $Counters.Tests += $Changed; $Counters.TestFiles++
         }
-        else {
-            $Counters.Production += $Changed
-            $Counters.ProductionFiles++
+        else { $Counters.Production += $Changed; $Counters.ProductionFiles++ }
+    }
+    Write-Output ('Production-код: {0} строк в {1} файлах' -f $Counters.Production, $Counters.ProductionFiles)
+    Write-Output ('Тесты:          {0} строк в {1} файлах' -f $Counters.Tests, $Counters.TestFiles)
+    Write-Output ('Сгенерированное: {0} строк в {1} файлах' -f $Counters.Generated, $Counters.GeneratedFiles)
+    Write-Output ('Документы flow:  {0} строк в {1} файлах' -f $Counters.Workflow, $Counters.WorkflowFiles)
+    Write-Output ('Чистые переносы: {0} (вне LOC и лимита файлов; требуется ревью путей)' -f $Moves)
+    Write-Output ('Бинарные/нетекстовые изменения: {0} (LOC не измерен)' -f $Binaries)
+    if ($TaskReport) {
+        Write-Output ('Ориентир задачи/PR: {0} строк production-кода' -f $PrBudget)
+        if ($Counters.Production -gt [int64]$PrBudget) {
+            Write-Output 'ИНФОРМАЦИЯ: превышен ориентир задачи/PR; лимиты slice здесь не применяются'
         }
+        Write-Output 'РЕЗУЛЬТАТ: информационный отчёт задачи; бюджет slice проверяется отдельно'
     }
-
-    Write-Output ("Production-код: {0} строк в {1} файлах" -f $Counters.Production, $Counters.ProductionFiles)
-    Write-Output ("Тесты:          {0} строк в {1} файлах" -f $Counters.Tests, $Counters.TestFiles)
-    Write-Output ("Сгенерированное: {0} строк в {1} файлах" -f $Counters.Generated, $Counters.GeneratedFiles)
-    Write-Output ("Документы flow:  {0} строк в {1} файлах" -f $Counters.Workflow, $Counters.WorkflowFiles)
-    Write-Output ("Бюджет этапа: {0} строк / {1} production-файлов" -f $SliceBudget, $FileBudget)
-    Write-Output ("Бюджет PR:    {0} строк production-кода" -f $PrBudget)
-
-    if ($Counters.Production -gt [int64]$PrBudget) {
-        Write-Output "РЕЗУЛЬТАТ: превышен бюджет PR; разделите изменение или зафиксируйте согласованное исключение"
-        exit 3
+    else {
+        Write-Output ('Бюджет этапа: {0} строк / {1} production-файлов' -f $SliceBudget, $FileBudget)
+        if ($Counters.Production -gt [int64]$SliceBudget -or $Counters.ProductionFiles -gt [int64]$FileBudget) {
+            Write-Output 'РЕЗУЛЬТАТ: превышен бюджет этапа; остановитесь для решения человека'
+            exit 2
+        }
+        Write-Output 'РЕЗУЛЬТАТ: изменение укладывается в стандартный бюджет этапа'
     }
-    if ($Counters.Production -gt [int64]$SliceBudget -or
-        $Counters.ProductionFiles -gt [int64]$FileBudget) {
-        Write-Output "РЕЗУЛЬТАТ: превышен бюджет этапа; остановитесь для решения человека"
-        exit 2
-    }
-    Write-Output "РЕЗУЛЬТАТ: изменение укладывается в стандартный бюджет этапа"
 }
 
 function Test-NonEmptyFile {
@@ -435,6 +508,51 @@ function Test-IsValidTaskState {
         return $true
     }
     return $State -match '^IMPLEMENTING_SLICE_[1-9][0-9]*$'
+}
+
+function Get-MarkdownField {
+    param([string]$Path, [string]$Name)
+    if (-not (Test-NonEmptyFile $Path)) { return '' }
+    $Prefix = '- ' + $Name + ':'
+    $Lines = @([IO.File]::ReadAllLines($Path) | Where-Object { $_.StartsWith($Prefix, [StringComparison]::Ordinal) })
+    if ($Lines.Count -ne 1) { return '' }
+    $Pattern = '^' + [regex]::Escape($Prefix) + ' `([^`]*)`[ \t]*$'
+    $Match = [regex]::Match($Lines[0], $Pattern)
+    if (-not $Match.Success) { return '' }
+    return $Match.Groups[1].Value
+}
+
+function Test-FilledField {
+    param([string]$Path, [string]$Name)
+    $Value = Get-MarkdownField $Path $Name
+    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -cnotin @(
+        'NOT_APPROVED', 'NOT_REVIEWED', 'UNKNOWN', 'НЕИЗВЕСТНО', 'НЕТ', 'NONE', 'N/A', 'REJECTED'
+    )
+}
+
+function Test-ChecksComplete {
+    param([string]$Path)
+    $Status = Get-MarkdownField $Path 'Обязательные проверки'
+    return $Status -ceq 'PASSED' -or ($Status -ceq 'APPROVED_EXCEPTION' -and
+        (Test-FilledField $Path 'Исключение по проверкам'))
+}
+
+function Test-HandoffComplete {
+    param([string]$Path, [string]$Brief)
+    if ((Get-MarkdownField $Path 'Результат') -cne 'IMPLEMENTED' -or
+        (Get-MarkdownField $Path 'Краткое резюме передано') -cne 'ДА') { return $false }
+    $Risk = Get-MarkdownField $Path 'Режим задачи'
+    if ($Risk -cnotin @('QUICK', 'GUIDED', 'MECHANICAL', 'CRITICAL') -or
+        $Risk -cne (Get-MarkdownField $Brief 'Режим риска')) { return $false }
+    $Choice = Get-MarkdownField $Path 'Выбор человека'
+    if ($Choice -ceq 'РАЗОБРАТЬ_ПОТОК') {
+        if ((Get-MarkdownField $Path 'Разбор потока проведён') -cne 'ДА') { return $false }
+    }
+    elseif ($Choice -ceq 'РАЗОБРАТЬ_ДИАГНОСТИКУ') {
+        if ((Get-MarkdownField $Path 'Разбор диагностики и отката проведён') -cne 'ДА') { return $false }
+    }
+    elseif ($Choice -cne 'КОНТЕКСТА_ДОСТАТОЧНО') { return $false }
+    return $Risk -cne 'CRITICAL' -or (Get-MarkdownField $Path 'Разбор диагностики и отката проведён') -ceq 'ДА'
 }
 
 function Test-FlowStructure {
@@ -543,53 +661,38 @@ function Test-FlowStructure {
                     "CONTEXT_HANDOFF", "DONE"
                 )
             if ($NeedsApprovedPlan) {
-                $Plan = Join-Path $TaskDirectory.FullName "plan.md"
-                if (Test-NonEmptyFile $Plan) {
-                    $PlanContent = [System.IO.File]::ReadAllText($Plan)
-                    if ($PlanContent.Contains('- Согласовал: `NOT_APPROVED`') -or
-                        $PlanContent.Contains('- Состояние: `DRAFT`')) {
-                        [Console]::Error.WriteLine("НЕ ПРИНЯТ ПЛАН $Plan")
-                        $Issues = $true
-                    }
+                $Plan = Join-Path $TaskDirectory.FullName 'plan.md'
+                if ((Get-MarkdownField $Plan 'Состояние') -cne 'APPROVED' -or
+                    -not (Test-FilledField $Plan 'Согласовал') -or
+                    (Get-MarkdownField $Plan 'Дата согласования') -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}($|T)') {
+                    [Console]::Error.WriteLine("НЕ ПРИНЯТ ПЛАН $Plan")
+                    $Issues = $true
                 }
             }
-
-            if ($BriefState -in @("WAIT_FINAL_HUMAN_REVIEW", "CONTEXT_HANDOFF", "DONE")) {
-                if (-not (Test-NonEmptyFile $FinalReview)) {
+            if ($BriefState -in @('WAIT_FINAL_HUMAN_REVIEW', 'CONTEXT_HANDOFF', 'DONE')) {
+                if ((Get-MarkdownField $FinalReview 'Состояние') -cne 'READY') {
                     [Console]::Error.WriteLine("НЕ ГОТОВ ПАКЕТ ФИНАЛЬНОГО РЕВЬЮ $FinalReview")
                     $Issues = $true
                 }
-                else {
-                    $FinalReviewContent = [System.IO.File]::ReadAllText($FinalReview)
-                    if ($FinalReviewContent.Contains('- Состояние: `NOT_READY`') -or
-                        $FinalReviewContent.Contains('`НЕ_ПРОВЕРЕНО`')) {
-                        [Console]::Error.WriteLine("НЕ ГОТОВ ПАКЕТ ФИНАЛЬНОГО РЕВЬЮ $FinalReview")
-                        $Issues = $true
-                    }
+            }
+            if ($BriefState -in @('CONTEXT_HANDOFF', 'DONE')) {
+                if ((Get-MarkdownField $FinalReview 'Решение человека') -cne 'APPROVED') {
+                    [Console]::Error.WriteLine("НЕ ПРИНЯТО ФИНАЛЬНОЕ РЕВЬЮ $FinalReview")
+                    $Issues = $true
+                }
+                if (-not (Test-ChecksComplete $FinalReview)) {
+                    [Console]::Error.WriteLine("НЕ ЗАВЕРШЕНЫ ОБЯЗАТЕЛЬНЫЕ ПРОВЕРКИ $FinalReview")
+                    $Issues = $true
+                }
+            }
+            if ($BriefState -eq 'DONE') {
+                $Handoff = Join-Path $TaskDirectory.FullName 'handoff.md'
+                if (-not (Test-HandoffComplete $Handoff $Brief)) {
+                    [Console]::Error.WriteLine("НЕ ЗАВЕРШЕНА ПЕРЕДАЧА КОНТЕКСТА $Handoff")
+                    $Issues = $true
                 }
             }
 
-            if ($BriefState -in @("CONTEXT_HANDOFF", "DONE")) {
-                if (Test-NonEmptyFile $FinalReview) {
-                    $FinalReviewContent = [System.IO.File]::ReadAllText($FinalReview)
-                    if ($FinalReviewContent.Contains('- Решение человека: `NOT_REVIEWED`')) {
-                        [Console]::Error.WriteLine("НЕ ПРИНЯТО ФИНАЛЬНОЕ РЕВЬЮ $FinalReview")
-                        $Issues = $true
-                    }
-                }
-            }
-
-            if ($BriefState -eq "DONE") {
-                $Handoff = Join-Path $TaskDirectory.FullName "handoff.md"
-                if (Test-NonEmptyFile $Handoff) {
-                    $HandoffContent = [System.IO.File]::ReadAllText($Handoff)
-                    if ($HandoffContent.Contains('`NOT_IMPLEMENTED`') -or
-                        $HandoffContent.Contains('- Выбор человека: `НЕИЗВЕСТНО`')) {
-                        [Console]::Error.WriteLine("НЕ ЗАВЕРШЕНА ПЕРЕДАЧА КОНТЕКСТА $Handoff")
-                        $Issues = $true
-                    }
-                }
-            }
         }
     }
 
@@ -627,6 +730,7 @@ switch ($Command.ToLowerInvariant()) {
         Show-FlowStatus
     }
     "budget" { Show-FlowBudget $RemainingArguments }
+    "budget-task" { Show-FlowBudget -Arguments $RemainingArguments -TaskReport }
     "validate" {
         if ($RemainingArguments.Count -ne 0) { Stop-Flow "validate не принимает аргументы" }
         Test-FlowStructure

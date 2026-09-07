@@ -2,7 +2,7 @@
 
 ## Результат
 
-`NOT_IMPLEMENTED`
+- Результат: `NOT_IMPLEMENTED`
 
 ## Поведение до и после
 

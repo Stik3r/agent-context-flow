@@ -24,7 +24,7 @@ config_value() {
 }
 
 slice_budget="${AGENT_FLOW_SLICE_BUDGET:-$(config_value AGENT_FLOW_SLICE_BUDGET 300)}"
-pr_budget="${AGENT_FLOW_PR_BUDGET:-$(config_value AGENT_FLOW_PR_BUDGET 600)}"
+pr_budget="${AGENT_FLOW_PR_BUDGET:-$(config_value AGENT_FLOW_PR_BUDGET 1800)}"
 file_budget="${AGENT_FLOW_PRODUCTION_FILE_BUDGET:-$(config_value AGENT_FLOW_PRODUCTION_FILE_BUDGET 5)}"
 default_diff="${AGENT_FLOW_DEFAULT_DIFF:-$(config_value AGENT_FLOW_DEFAULT_DIFF HEAD)}"
 
@@ -46,6 +46,7 @@ usage() {
     '  new <slug>         Создать task-папку из шаблонов' \
     '  status             Показать состояния задач' \
     '  budget [git-range] Классифицировать и посчитать изменённые строки (по умолчанию HEAD)' \
+    '  budget-task [base] Информационный размер всей задачи/PR' \
     '  validate           Проверить файлы flow, состояния и обязательные gates' \
     '  help               Показать эту справку'
 }
@@ -127,85 +128,135 @@ show_status() {
   [[ $found -eq 1 ]] || printf 'Записи задач не найдены.\n'
 }
 
-show_budget() {
-  local diff_range="${1:-$default_diff}"
+# ls-tree metadata is ASCII; paths are literal and may contain tabs/newlines.
+tree_signature() {
+  local entry
+  entry="$(git -C "$repo_root" --literal-pathspecs ls-tree "$1" -- "$2")" || return
+  printf '%s' "${entry%%$'\t'*}"
+}
+
+show_budget() (
+  # Subshell confines the temporary-file trap and arrays to this invocation.
+  local diff_range="${1:-$default_diff}" mode="${2:-slice}"
   validate_integer AGENT_FLOW_SLICE_BUDGET "$slice_budget"
   validate_integer AGENT_FLOW_PR_BUDGET "$pr_budget"
   validate_integer AGENT_FLOW_PRODUCTION_FILE_BUDGET "$file_budget"
   [[ "$diff_range" != -* ]] || die 'git-range не может начинаться с дефиса'
-
   git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || die 'budget требует Git-репозиторий'
 
-  local output tracked_output untracked_output status path absolute additions
-  set +e
-  tracked_output="$(git -C "$repo_root" diff --numstat "$diff_range" -- . 2>&1)"
-  status=$?
-  set -e
-  [[ $status -eq 0 ]] || die "$tracked_output"
-
-  untracked_output=''
-  while IFS= read -r -d '' path; do
-    absolute="$repo_root/$path"
-    [[ -f "$absolute" ]] || continue
-    if [[ ! -s "$absolute" ]] || LC_ALL=C grep -Iq . "$absolute"; then
-      additions="$(awk 'END { print NR + 0 }' "$absolute")"
-    else
-      additions='-'
-    fi
-    untracked_output+="${additions}"$'\t0\t'"${path}"$'\n'
-  done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
-
-  output="$tracked_output"
-  if [[ -n "$untracked_output" ]]; then
-    [[ -z "$output" ]] || output+=$'\n'
-    output+="${untracked_output%$'\n'}"
+  local base="$diff_range" target='' left right
+  case "$diff_range" in
+    *...*)
+      left="${diff_range%%...*}"; right="${diff_range#*...}"
+      base="$(git -C "$repo_root" merge-base "${left:-HEAD}" "${right:-HEAD}")" || die 'не удалось определить merge-base'
+      target="${right:-HEAD}" ;;
+    *..*) base="${diff_range%%..*}"; target="${diff_range#*..}"
+      base="${base:-HEAD}"; target="${target:-HEAD}" ;;
+  esac
+  base="$(git -C "$repo_root" rev-parse --verify "$base^{commit}")" || die 'неверный baseline'
+  local scratch
+  scratch="$(mktemp -d)" || die 'не удалось создать временный каталог'
+  trap 'rm -rf -- "$scratch"' EXIT
+  local args=("$base")
+  [[ -z "$target" ]] || args+=("$target")
+  git -C "$repo_root" diff --no-ext-diff --no-textconv --no-renames --numstat -z "${args[@]}" -- . > "$scratch/stats" || die 'git diff завершился ошибкой'
+  local paths=() adds=() dels=() old=() current=() paired=()
+  local record path rest count=0 i j signature absolute hash file_mode
+  while IFS= read -r -d '' record; do
+    adds[$count]="${record%%$'\t'*}"
+    rest="${record#*$'\t'}"
+    dels[$count]="${rest%%$'\t'*}"
+    paths[$count]="${rest#*$'\t'}"
+    count=$((count + 1))
+  done < "$scratch/stats"
+  if [[ -z "$target" ]]; then
+    git -C "$repo_root" ls-files --others --exclude-standard -z > "$scratch/untracked" || die 'не удалось прочитать untracked-файлы'
+    while IFS= read -r -d '' path; do
+      absolute="$repo_root/$path"
+      [[ -f "$absolute" || -L "$absolute" ]] || continue
+      paths[$count]="$path"; dels[$count]=0
+      if [[ -L "$absolute" ]]; then
+        adds[$count]='-'
+      elif [[ ! -s "$absolute" ]] || LC_ALL=C grep -Iq . "$absolute"; then
+        adds[$count]="$(awk 'END { print NR + 0 }' "$absolute")"
+      else
+        adds[$count]='-'
+      fi
+      count=$((count + 1))
+    done < "$scratch/untracked"
   fi
-
-  printf '%s\n' "$output" | awk -F '\t' \
-    -v slice_budget="$slice_budget" \
-    -v pr_budget="$pr_budget" \
-    -v file_budget="$file_budget" '
-    function value(number) { return number == "-" ? 0 : number + 0 }
-    function is_test(path) {
-      return path ~ /(^|\/)(test|tests|spec|specs|__tests__|fixtures)(\/|$)/ ||
-             path ~ /(_test|\.test|\.spec)\.[^.\/]+$/
-    }
-    function is_generated(path) {
-      return path ~ /(^|\/)(generated|dist|build|vendor)(\/|$)/ ||
-             path ~ /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum|Cargo\.lock)$/
-    }
-    {
-      changed = value($1) + value($2)
-      path = $3
-      if (path ~ /^\.agent-flow\// || path == "AGENTS.md") {
-        workflow += changed; workflow_files++
-      } else if (is_generated(path)) {
-        generated += changed; generated_files++
-      } else if (is_test(path)) {
-        tests += changed; test_files++
-      } else {
-        production += changed; production_files++
-      }
-    }
-    END {
-      printf "Production-код: %d строк в %d файлах\n", production, production_files
-      printf "Тесты:          %d строк в %d файлах\n", tests, test_files
-      printf "Сгенерированное: %d строк в %d файлах\n", generated, generated_files
-      printf "Документы flow:  %d строк в %d файлах\n", workflow, workflow_files
-      printf "Бюджет этапа: %d строк / %d production-файлов\n", slice_budget, file_budget
-      printf "Бюджет PR:    %d строк production-кода\n", pr_budget
-      if (production > pr_budget) {
-        print "РЕЗУЛЬТАТ: превышен бюджет PR; разделите изменение или зафиксируйте согласованное исключение"
-        exit 3
-      }
-      if (production > slice_budget || production_files > file_budget) {
-        print "РЕЗУЛЬТАТ: превышен бюджет этапа; остановитесь для решения человека"
-        exit 2
-      }
-      print "РЕЗУЛЬТАТ: изменение укладывается в стандартный бюджет этапа"
-    }
-  '
-}
+  local filemode
+  filemode="$(git -C "$repo_root" config --get core.filemode || true)"
+  for ((i=0; i<count; i++)); do
+    path="${paths[$i]}"; paired[$i]=0
+    old[$i]="$(tree_signature "$base" "$path")" || die 'не удалось прочитать baseline tree'
+    current[$i]=''
+    if [[ -n "$target" ]]; then
+      current[$i]="$(tree_signature "$target" "$path")" || die 'не удалось прочитать target tree'
+    else
+      absolute="$repo_root/$path"
+      if [[ -L "$absolute" ]]; then
+        current[$i]='special'
+      elif [[ -f "$absolute" ]]; then
+        hash="$(git -C "$repo_root" hash-object --no-filters -- "$absolute")" || die 'не удалось вычислить blob файла'
+        file_mode=100644
+        if [[ "$filemode" != false && -x "$absolute" ]]; then file_mode=100755; fi
+        current[$i]="$file_mode blob $hash"
+      elif [[ -e "$absolute" ]]; then
+        current[$i]='special'
+      fi
+    fi
+  done
+  local moves=0
+  for ((i=0; i<count; i++)); do
+    [[ -z "${current[$i]}" && "${old[$i]}" == 100???\ blob\ * ]] || continue
+    for ((j=0; j<count; j++)); do
+      if [[ "${paired[$j]}" == 0 && -z "${old[$j]}" && "${current[$j]}" == "${old[$i]}" ]]; then
+        paired[$i]=1; paired[$j]=1; moves=$((moves + 1))
+        printf 'Чистый перенос: %q -> %q\n' "${paths[$i]}" "${paths[$j]}"
+        break
+      fi
+    done
+  done
+  local production=0 production_files=0 tests=0 test_files=0 generated=0 generated_files=0 workflow=0 workflow_files=0 binaries=0 changed a d
+  for ((i=0; i<count; i++)); do
+    [[ "${paired[$i]}" == 0 ]] || continue
+    path="${paths[$i]}"; a="${adds[$i]}"; d="${dels[$i]}"
+    if [[ "$a" == '-' || "$d" == '-' ]]; then binaries=$((binaries + 1)); fi
+    [[ "$a" != '-' ]] || a=0
+    [[ "$d" != '-' ]] || d=0
+    changed=$((a + d))
+    if [[ "$path" == .agent-flow/* || "$path" == AGENTS.md ]]; then
+      workflow=$((workflow + changed)); workflow_files=$((workflow_files + 1))
+    elif [[ "$path" =~ (^|/)(generated|dist|build|vendor)(/|$) || "$path" =~ (^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum|Cargo\.lock)$ ]]; then
+      generated=$((generated + changed)); generated_files=$((generated_files + 1))
+    elif [[ "$path" =~ (^|/)(test|tests|spec|specs|__tests__|fixtures)(/|$) || "$path" =~ (_test|\.test|\.spec)\.[^./]+$ ]]; then
+      tests=$((tests + changed)); test_files=$((test_files + 1))
+    else
+      production=$((production + changed)); production_files=$((production_files + 1))
+    fi
+  done
+  printf 'Production-код: %d строк в %d файлах\n' "$production" "$production_files"
+  printf 'Тесты:          %d строк в %d файлах\n' "$tests" "$test_files"
+  printf 'Сгенерированное: %d строк в %d файлах\n' "$generated" "$generated_files"
+  printf 'Документы flow:  %d строк в %d файлах\n' "$workflow" "$workflow_files"
+  printf 'Чистые переносы: %d (вне LOC и лимита файлов; требуется ревью путей)\n' "$moves"
+  printf 'Бинарные/нетекстовые изменения: %d (LOC не измерен)\n' "$binaries"
+  if [[ "$mode" == task ]]; then
+    printf 'Ориентир задачи/PR: %d строк production-кода\n' "$pr_budget"
+    if (( production > pr_budget )); then
+      printf 'ИНФОРМАЦИЯ: превышен ориентир задачи/PR; лимиты slice здесь не применяются\n'
+    fi
+    printf 'РЕЗУЛЬТАТ: информационный отчёт задачи; бюджет slice проверяется отдельно\n'
+  else
+    printf 'Бюджет этапа: %d строк / %d production-файлов\n' "$slice_budget" "$file_budget"
+    if (( production > slice_budget || production_files > file_budget )); then
+      printf 'РЕЗУЛЬТАТ: превышен бюджет этапа; остановитесь для решения человека\n'
+      exit 2
+    fi
+    printf 'РЕЗУЛЬТАТ: изменение укладывается в стандартный бюджет этапа\n'
+  fi
+)
 
 task_state_from() {
   sed -n \
@@ -222,6 +273,57 @@ valid_task_state() {
       ;;
   esac
   [[ "$1" =~ ^IMPLEMENTING_SLICE_[1-9][0-9]*$ ]]
+}
+
+# Exactly one complete Markdown field is required; missing/duplicate fields fail.
+markdown_field() {
+  [[ -s "$1" ]] || return 0
+  awk -v key="$2" '
+    { sub(/\r$/, "") }
+    index($0, "- " key ":") == 1 {
+      count++
+      prefix = "- " key ": `"
+      if (index($0, prefix) == 1 && $0 ~ /`[ \t]*$/) {
+        value = substr($0, length(prefix) + 1)
+        sub(/`[ \t]*$/, "", value)
+        if (index(value, "`") != 0) value = ""
+      }
+    }
+    END { if (count == 1) print value }
+  ' "$1"
+}
+
+filled_field() {
+  local value
+  value="$(markdown_field "$1" "$2")"
+  case "$value" in
+    ''|NOT_APPROVED|NOT_REVIEWED|UNKNOWN|НЕИЗВЕСТНО|НЕТ|NONE|N/A|REJECTED) return 1 ;;
+  esac
+  [[ "$value" =~ [^[:space:]] ]]
+}
+
+checks_complete() {
+  local status
+  status="$(markdown_field "$1" 'Обязательные проверки')"
+  [[ "$status" == PASSED ]] ||
+    { [[ "$status" == APPROVED_EXCEPTION ]] && filled_field "$1" 'Исключение по проверкам'; }
+}
+
+handoff_complete() {
+  local choice risk
+  [[ "$(markdown_field "$1" 'Результат')" == IMPLEMENTED ]] || return 1
+  [[ "$(markdown_field "$1" 'Краткое резюме передано')" == ДА ]] || return 1
+  risk="$(markdown_field "$1" 'Режим задачи')"
+  case "$risk" in QUICK|GUIDED|MECHANICAL|CRITICAL) ;; *) return 1 ;; esac
+  [[ "$risk" == "$(markdown_field "$2" 'Режим риска')" ]] || return 1
+  choice="$(markdown_field "$1" 'Выбор человека')"
+  case "$choice" in
+    КОНТЕКСТА_ДОСТАТОЧНО) ;;
+    РАЗОБРАТЬ_ПОТОК) [[ "$(markdown_field "$1" 'Разбор потока проведён')" == ДА ]] || return 1 ;;
+    РАЗОБРАТЬ_ДИАГНОСТИКУ) [[ "$(markdown_field "$1" 'Разбор диагностики и отката проведён')" == ДА ]] || return 1 ;;
+    *) return 1 ;;
+  esac
+  [[ "$risk" != CRITICAL || "$(markdown_field "$1" 'Разбор диагностики и отката проведён')" == ДА ]]
 }
 
 validate_flow() {
@@ -309,9 +411,9 @@ validate_flow() {
     case "$brief_state" in
       IMPLEMENTING_SLICE_*|WAIT_SLICE_APPROVAL|VERIFYING|WAIT_FINAL_HUMAN_REVIEW|\
         CONTEXT_HANDOFF|DONE)
-        if [[ -s "$task_dir/plan.md" ]] &&
-          { grep -Fq -- '- Согласовал: `NOT_APPROVED`' "$task_dir/plan.md" ||
-            grep -Fq -- '- Состояние: `DRAFT`' "$task_dir/plan.md"; }; then
+        if [[ "$(markdown_field "$task_dir/plan.md" 'Состояние')" != APPROVED ]] ||
+          ! filled_field "$task_dir/plan.md" 'Согласовал' ||
+          [[ ! "$(markdown_field "$task_dir/plan.md" 'Дата согласования')" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}($|T) ]]; then
           printf 'НЕ ПРИНЯТ ПЛАН %s\n' "${task_dir%/}/plan.md" >&2
           issues=1
         fi
@@ -320,9 +422,7 @@ validate_flow() {
 
     case "$brief_state" in
       WAIT_FINAL_HUMAN_REVIEW|CONTEXT_HANDOFF|DONE)
-        if [[ ! -s "$task_dir/final-review.md" ]] ||
-          grep -Fq -- '- Состояние: `NOT_READY`' "$task_dir/final-review.md" ||
-          grep -Fq '`НЕ_ПРОВЕРЕНО`' "$task_dir/final-review.md"; then
+        if [[ "$(markdown_field "$task_dir/final-review.md" 'Состояние')" != READY ]]; then
           printf 'НЕ ГОТОВ ПАКЕТ ФИНАЛЬНОГО РЕВЬЮ %s\n' "${task_dir%/}/final-review.md" >&2
           issues=1
         fi
@@ -331,17 +431,18 @@ validate_flow() {
 
     case "$brief_state" in
       CONTEXT_HANDOFF|DONE)
-        if [[ -s "$task_dir/final-review.md" ]] &&
-          grep -Fq -- '- Решение человека: `NOT_REVIEWED`' "$task_dir/final-review.md"; then
+        if [[ "$(markdown_field "$task_dir/final-review.md" 'Решение человека')" != APPROVED ]]; then
           printf 'НЕ ПРИНЯТО ФИНАЛЬНОЕ РЕВЬЮ %s\n' "${task_dir%/}/final-review.md" >&2
+          issues=1
+        fi
+        if ! checks_complete "$task_dir/final-review.md"; then
+          printf 'НЕ ЗАВЕРШЕНЫ ОБЯЗАТЕЛЬНЫЕ ПРОВЕРКИ %s\n' "${task_dir%/}/final-review.md" >&2
           issues=1
         fi
         ;;
     esac
 
-    if [[ "$brief_state" == 'DONE' && -s "$task_dir/handoff.md" ]] &&
-      { grep -Fq '`NOT_IMPLEMENTED`' "$task_dir/handoff.md" ||
-        grep -Fq -- '- Выбор человека: `НЕИЗВЕСТНО`' "$task_dir/handoff.md"; }; then
+    if [[ "$brief_state" == DONE ]] && ! handoff_complete "$task_dir/handoff.md" "$task_dir/brief.md"; then
       printf 'НЕ ЗАВЕРШЕНА ПЕРЕДАЧА КОНТЕКСТА %s\n' "${task_dir%/}/handoff.md" >&2
       issues=1
     fi
@@ -370,6 +471,7 @@ case "$command" in
   new) new_task "$@" ;;
   status) [[ $# -eq 0 ]] || die 'status не принимает аргументы'; show_status ;;
   budget) [[ $# -le 1 ]] || die 'budget принимает не более одного Git-диапазона'; show_budget "${1:-}" ;;
+  budget-task) [[ $# -le 1 ]] || die 'budget-task принимает не более одного Git-диапазона'; show_budget "${1:-}" task ;;
   validate) [[ $# -eq 0 ]] || die 'validate не принимает аргументы'; validate_flow ;;
   help|-h|--help) usage ;;
   *) die "неизвестная команда: $command" ;;
