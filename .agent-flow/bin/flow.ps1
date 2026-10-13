@@ -573,6 +573,7 @@ function Test-FlowStructure {
         (Join-Path $FlowDirectory "prompts/finalize.md"),
         (Join-Path $FlowDirectory "prompts/new-feature.md"),
         (Join-Path $FlowDirectory "prompts/resume.md"),
+        (Join-Path $FlowDirectory "prompts/review-slice.md"),
         (Join-Path $FlowDirectory "tasks/README.md"),
         (Join-Path $FlowDirectory "templates/decision.md"),
         (Join-Path $FlowDirectory "templates/pr-description.md"),

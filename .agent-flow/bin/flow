@@ -344,6 +344,7 @@ validate_flow() {
     "$flow_dir/prompts/finalize.md"
     "$flow_dir/prompts/new-feature.md"
     "$flow_dir/prompts/resume.md"
+    "$flow_dir/prompts/review-slice.md"
     "$flow_dir/tasks/README.md"
     "$flow_dir/templates/decision.md"
     "$flow_dir/templates/pr-description.md"
