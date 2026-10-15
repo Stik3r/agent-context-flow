@@ -189,8 +189,31 @@ Approval относится только к решениям и границам
    рабочего чата, пересказ реализации или самооценку исполнителя.
 
    Из корня того же проекта запустить отдельную новую сессию
-   `codex exec` с `--sandbox read-only` и `--ask-for-approval never`.
-   Не использовать `resume` или `fork`.
+   `codex exec` с `--sandbox read-only`, `--ask-for-approval never`
+   и `--ephemeral`. Не использовать `resume` или `fork`.
+
+   На native Windows с PowerShell 5.1 использовать префикс запуска:
+
+   ```powershell
+   codex --ask-for-approval never -c allow_login_shell=false -c windows.sandbox=unelevated exec --sandbox read-only --ephemeral
+   ```
+
+   На Windows стартовый запрос должен начинаться с `REVIEW_ONLY`
+   и явно предписывать первым shell-вызовом прочитать инструкцию ревью
+   и входные данные следующей командой:
+
+   ```powershell
+   node -e "const fs=require('node:fs'); for(const p of ['.agent-flow/prompts/review-slice.md','<review-request>']) { process.stdout.write('\nFILE: '+p+'\n'); process.stdout.write(fs.readFileSync(p)); }"
+   ```
+
+   Перед запуском заменить `<review-request>` фактическим путём
+   подготовленного файла входных данных.
+
+   В тот же стартовый запрос включить требование читать остальные
+   текстовые файлы через Node аналогичным способом, без Get-Content
+   и текстовых конвейеров PowerShell. Инструкция первого чтения должна
+   находиться непосредственно в стартовом запросе: нельзя рассчитывать,
+   что ревьюер сначала прочитает её из ещё не открытого файла.
 
    Сохранить финальный ответ через `--output-last-message` в
    `slice-<N>-review-<K>.md`. Предыдущие отчёты не перезаписывать.
